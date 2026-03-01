@@ -49,7 +49,7 @@ struct HeuristicSemanticEngine {
         let narrative = """
         AI interpretation: this looks like a \(scope.appType). \
         Intent: \(scope.productIntent) \
-        Key scope: \(capabilities.prefix(3).joined(separator: ", ")).
+        Key scope: \(capabilities.prefix(Constants.SemanticEngine.narrativeCapabilityCount).joined(separator: ", ")).
         """
 
         return SemanticPipelineResult(
@@ -71,8 +71,8 @@ struct HeuristicSemanticEngine {
         let text = (element.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = text.lowercased()
         let centerY = element.frame.y + element.frame.height / 2
-        let leftZone = element.frame.x < Double(board.width) * 0.24
-        let topZone = centerY < Double(board.height) * 0.2
+        let leftZone = element.frame.x < Double(board.width) * Constants.SemanticEngine.leftZoneFraction
+        let topZone = centerY < Double(board.height) * Constants.SemanticEngine.topZoneFraction
 
         if element.kind == .text {
             if isDateRange(normalized) {
@@ -115,8 +115,8 @@ struct HeuristicSemanticEngine {
         }
 
         if element.kind == .shape {
-            if element.frame.width > Double(board.width) * 0.36, element.frame.height > Double(board.height) * 0.18 {
-                if element.frame.y < Double(board.height) * 0.72 {
+            if element.frame.width > Double(board.width) * Constants.SemanticEngine.largeShapeWidthFraction, element.frame.height > Double(board.height) * Constants.SemanticEngine.largeShapeHeightFraction {
+                if element.frame.y < Double(board.height) * Constants.SemanticEngine.midContentBoundaryFraction {
                     return (.chart, "Chart Panel \(index + 1)", "Large mid-content panel")
                 }
                 return (.panel, "Content Panel \(index + 1)", "Large lower panel container")
@@ -155,7 +155,10 @@ struct HeuristicSemanticEngine {
             ),
         ]
 
-        var best = candidates[0]
+        // Guard against future changes that might empty the candidates array.
+        guard var best = candidates.first else {
+            return (type: "Unclassified", confidence: 0.42, intent: "Unknown product intent.", targetUsers: [])
+        }
         var bestScore = -1
 
         for candidate in candidates {
@@ -171,7 +174,7 @@ struct HeuristicSemanticEngine {
         }
 
         let normalizedScore = max(0, bestScore)
-        let confidence = min(0.97, 0.42 + (Double(normalizedScore) * 0.09))
+        let confidence = min(Constants.SemanticEngine.maxAppTypeConfidence, Constants.SemanticEngine.baseAppTypeConfidence + (Double(normalizedScore) * Constants.SemanticEngine.perKeywordConfidenceIncrement))
 
         return (
             type: best.type,
@@ -230,7 +233,7 @@ struct HeuristicSemanticEngine {
         }
 
         questions.append("What data sources should power this \(appType.lowercased())?")
-        return Array(questions.prefix(4))
+        return Array(questions.prefix(Constants.SemanticEngine.maxOpenQuestions))
     }
 
     private func defaultRoadmap(for appType: String) -> [String] {
@@ -308,6 +311,6 @@ struct HeuristicSemanticEngine {
     private func isLikelyTableHeader(_ value: String, board: Artboard, frame: ElementFrame) -> Bool {
         let lower = value.lowercased()
         let match = ["name", "department", "days", "start", "status", "email"].contains { lower == $0 }
-        return match && frame.y > Double(board.height) * 0.45
+        return match && frame.y > Double(board.height) * Constants.SemanticEngine.tableHeaderBoundaryFraction
     }
 }

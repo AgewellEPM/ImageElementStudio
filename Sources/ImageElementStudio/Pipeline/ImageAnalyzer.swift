@@ -2,17 +2,6 @@ import AppKit
 import Foundation
 import Vision
 
-enum ImageAnalyzerError: LocalizedError {
-    case invalidImage
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidImage:
-            return "The selected image could not be converted for analysis."
-        }
-    }
-}
-
 struct ImageAnalyzer {
     func analyze(cgImage: CGImage, filename: String) async throws -> AnalysisDocument {
         try await Task.detached(priority: .userInitiated) {
@@ -30,13 +19,13 @@ struct ImageAnalyzer {
         let textRequest = VNRecognizeTextRequest()
         textRequest.recognitionLevel = .accurate
         textRequest.usesLanguageCorrection = true
-        textRequest.minimumTextHeight = 0.008
+        textRequest.minimumTextHeight = Constants.Analysis.minimumTextHeight
 
         let rectangleRequest = VNDetectRectanglesRequest()
-        rectangleRequest.maximumObservations = 80
-        rectangleRequest.minimumAspectRatio = 0.12
-        rectangleRequest.minimumSize = 0.02
-        rectangleRequest.minimumConfidence = 0.35
+        rectangleRequest.maximumObservations = Constants.Analysis.maximumRectangleObservations
+        rectangleRequest.minimumAspectRatio = Constants.Analysis.minimumRectangleAspectRatio
+        rectangleRequest.minimumSize = Constants.Analysis.minimumRectangleSize
+        rectangleRequest.minimumConfidence = Constants.Analysis.minimumRectangleConfidence
 
         try requestHandler.perform([textRequest, rectangleRequest])
 
@@ -96,7 +85,7 @@ struct ImageAnalyzer {
             guard !text.isEmpty else { return nil }
 
             let frame = pixelFrame(from: observation.boundingBox, imageSize: imageSize)
-            guard frame.width > 12, frame.height > 8 else { return nil }
+            guard frame.width > Constants.Analysis.minimumTextFragmentWidth, frame.height > Constants.Analysis.minimumTextFragmentHeight else { return nil }
 
             return TextFragment(
                 text: text,
@@ -129,10 +118,10 @@ struct ImageAnalyzer {
     ) -> [CanvasElement] {
         observations.enumerated().compactMap { index, observation in
             let frame = pixelFrame(from: observation.boundingBox, imageSize: imageSize)
-            guard frame.width > 24, frame.height > 24 else { return nil }
+            guard frame.width > Constants.Analysis.minimumShapeSize, frame.height > Constants.Analysis.minimumShapeSize else { return nil }
 
             let isTextContainer = existingTextFrames.contains { textFrame in
-                overlapRatio(between: frame, and: textFrame) > 0.72
+                overlapRatio(between: frame, and: textFrame) > Constants.Analysis.shapeTextOverlapThreshold
             }
             guard !isTextContainer else { return nil }
 
@@ -220,10 +209,10 @@ struct ImageAnalyzer {
                 let gap = fragment.frame.x - (current.frame.x + current.frame.width)
                 let averageHeight = (current.frame.height + fragment.frame.height) / 2
                 let verticalOverlap = verticalOverlapRatio(current.frame, fragment.frame)
-                let mergeThreshold = max(10.0, averageHeight * 1.15)
+                let mergeThreshold = max(Constants.Analysis.textMergeMinThreshold, averageHeight * Constants.Analysis.textMergeHeightMultiplier)
 
-                if verticalOverlap > 0.45, gap <= mergeThreshold {
-                    current = merge(current, with: fragment, includeSpace: gap > 2)
+                if verticalOverlap > Constants.Analysis.textMergeVerticalOverlapThreshold, gap <= mergeThreshold {
+                    current = merge(current, with: fragment, includeSpace: gap > Constants.Analysis.textMergeSpaceGap)
                 } else {
                     merged.append(current)
                     current = fragment
@@ -249,7 +238,7 @@ struct ImageAnalyzer {
         for fragment in ranked {
             let duplicateExists = accepted.contains { existing in
                 normalize(fragment.text) == normalize(existing.text)
-                    && overlapRatio(between: fragment.frame, and: existing.frame) > 0.82
+                    && overlapRatio(between: fragment.frame, and: existing.frame) > Constants.Analysis.textDeduplicationOverlapThreshold
             }
             if !duplicateExists {
                 accepted.append(fragment)
@@ -268,20 +257,20 @@ struct ImageAnalyzer {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Text \(fallbackIndex + 1)" }
 
-        if trimmed.count <= 30 {
+        if trimmed.count <= Constants.Analysis.maxTextElementNameLength {
             return trimmed
         }
 
-        return "\(trimmed.prefix(27))..."
+        return "\(trimmed.prefix(Constants.Analysis.truncatedTextNamePrefixLength))..."
     }
 
     private static func isLikelySameLine(_ lhs: TextFragment, _ rhs: TextFragment) -> Bool {
         let leftCenter = lhs.frame.y + (lhs.frame.height / 2)
         let rightCenter = rhs.frame.y + (rhs.frame.height / 2)
         let centerDelta = abs(leftCenter - rightCenter)
-        let tolerance = max(7.0, min(lhs.frame.height, rhs.frame.height) * 0.7)
+        let tolerance = max(Constants.Analysis.sameLineMinTolerance, min(lhs.frame.height, rhs.frame.height) * Constants.Analysis.sameLineHeightMultiplier)
 
-        return centerDelta <= tolerance && verticalOverlapRatio(lhs.frame, rhs.frame) > 0.35
+        return centerDelta <= tolerance && verticalOverlapRatio(lhs.frame, rhs.frame) > Constants.Analysis.sameLineOverlapThreshold
     }
 
     private static func merge(_ lhs: TextFragment, with rhs: TextFragment, includeSpace: Bool) -> TextFragment {

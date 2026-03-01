@@ -17,9 +17,11 @@ final class ProjectMemoryStore {
 
         if let loaded = Self.load(from: fileURL) ?? Self.loadLegacyDefaultIfNeeded(for: resolvedID) {
             self.memory = Self.withProjectMetadata(loaded, projectID: resolvedID, projectName: resolvedName)
+            AppLogger.info("Loaded existing project memory: \(resolvedName) (\(loaded.entries.count) entries)", category: .project)
             persist()
         } else {
             self.memory = Self.defaultMemory(projectID: resolvedID, projectName: resolvedName)
+            AppLogger.info("Created new project memory: \(resolvedName)", category: .project)
             persist()
         }
     }
@@ -27,6 +29,8 @@ final class ProjectMemoryStore {
     func switchProject(to newProjectName: String) -> ProjectMemory {
         let resolvedName = Self.cleanedProjectName(newProjectName)
         let resolvedID = Self.normalizedProjectID(from: resolvedName)
+
+        AppLogger.info("Switching project from '\(projectName)' to '\(resolvedName)'", category: .project)
 
         projectName = resolvedName
         projectID = resolvedID
@@ -52,7 +56,7 @@ final class ProjectMemoryStore {
         while FileManager.default.fileExists(atPath: Self.fileURL(for: Self.normalizedProjectID(from: candidateName)).path) {
             attempt += 1
             candidateName = "\(resolvedBase) \(attempt)"
-            if attempt > 40 {
+            if attempt > Constants.Memory.maxProjectNameAttempts {
                 let suffix = Self.timestampSuffix()
                 candidateName = "\(resolvedBase) \(suffix)"
                 break
@@ -150,8 +154,8 @@ final class ProjectMemoryStore {
             memory.strategySessions[existingIndex] = session
         } else {
             memory.strategySessions.append(session)
-            if memory.strategySessions.count > 24 {
-                memory.strategySessions.removeFirst(memory.strategySessions.count - 24)
+            if memory.strategySessions.count > Constants.Memory.maxStrategySessions {
+                memory.strategySessions.removeFirst(memory.strategySessions.count - Constants.Memory.maxStrategySessions)
             }
         }
 
@@ -167,8 +171,8 @@ final class ProjectMemoryStore {
             memory.acceptedStrategySpecs[existingIndex] = spec
         } else {
             memory.acceptedStrategySpecs.append(spec)
-            if memory.acceptedStrategySpecs.count > 18 {
-                memory.acceptedStrategySpecs.removeFirst(memory.acceptedStrategySpecs.count - 18)
+            if memory.acceptedStrategySpecs.count > Constants.Memory.maxAcceptedStrategySpecs {
+                memory.acceptedStrategySpecs.removeFirst(memory.acceptedStrategySpecs.count - Constants.Memory.maxAcceptedStrategySpecs)
             }
         }
 
@@ -195,8 +199,8 @@ final class ProjectMemoryStore {
                 confidence: confidence
             )
         )
-        if memory.decisionLog.count > 80 {
-            memory.decisionLog.removeFirst(memory.decisionLog.count - 80)
+        if memory.decisionLog.count > Constants.Memory.maxDecisionLogEntries {
+            memory.decisionLog.removeFirst(memory.decisionLog.count - Constants.Memory.maxDecisionLogEntries)
         }
 
         memory.updatedAt = Date()
@@ -228,8 +232,8 @@ final class ProjectMemoryStore {
         }
 
         memory.entries.append(entry)
-        if memory.entries.count > 80 {
-            memory.entries.removeFirst(memory.entries.count - 80)
+        if memory.entries.count > Constants.Memory.maxEntries {
+            memory.entries.removeFirst(memory.entries.count - Constants.Memory.maxEntries)
         }
 
         memory.updatedAt = Date()
@@ -251,7 +255,7 @@ final class ProjectMemoryStore {
         }
 
         let interval = abs(last.createdAt.timeIntervalSince(next.createdAt))
-        return interval < 3.5
+        return interval < Constants.Memory.coalesceInterval
     }
 
     private func mergedScope(existing: [String], incoming: [String]) -> [String] {
@@ -261,7 +265,7 @@ final class ProjectMemoryStore {
                 ordered.append(item)
             }
         }
-        return Array(ordered.prefix(14))
+        return Array(ordered.prefix(Constants.Memory.maxMergedScopeCapabilities))
     }
 
     private func persist() {
@@ -274,16 +278,25 @@ final class ProjectMemoryStore {
             let parent = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
             try data.write(to: fileURL, options: .atomic)
+            AppLogger.debug("Project memory persisted (\(data.count) bytes)", category: .project)
         } catch {
             // Non-fatal: memory still exists in-process.
+            AppLogger.warning("Failed to persist project memory: \(error.localizedDescription)", category: .project)
         }
     }
 
     private static func load(from url: URL) -> ProjectMemory? {
+        // Best-effort load: file may not exist yet (first launch), so nil is expected.
         guard let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(ProjectMemory.self, from: data)
+        do {
+            return try decoder.decode(ProjectMemory.self, from: data)
+        } catch {
+            // Log decoding failures so corrupt files are not silently ignored.
+            AppLogger.error("Failed to decode project memory at \(url.path): \(error.localizedDescription)", category: .project)
+            return nil
+        }
     }
 
     private static func defaultMemory(projectID: String, projectName: String) -> ProjectMemory {
@@ -354,7 +367,7 @@ final class ProjectMemoryStore {
         if slug.isEmpty {
             return "default-project"
         }
-        return String(slug.prefix(48))
+        return String(slug.prefix(Constants.Memory.maxProjectIDLength))
     }
 
     private static func withProjectMetadata(_ memory: ProjectMemory, projectID: String, projectName: String) -> ProjectMemory {

@@ -202,6 +202,20 @@ struct GeneratedProjectWriter: Sendable {
         """
     }
 
+    // MARK: - Timestamped Project Directory
+
+    /// Creates a timestamped project directory under ~/Documents/ImageElementStudioBuilds and writes all files into it.
+    /// Returns the root project directory URL.
+    static func writeProjectToDisk(files: [GeneratedFileEntry], appName: String, target: StudioViewModel.BuildTarget) throws -> URL {
+        let baseDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        let slug = appName.lowercased().replacingOccurrences(of: " ", with: "-").filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        let projectDirectory = baseDirectory.appendingPathComponent("ImageElementStudioBuilds", isDirectory: true).appendingPathComponent(slug, isDirectory: true).appendingPathComponent("\(timestamp)-ai-\(target.rawValue)", isDirectory: true)
+        try writeProject(files: files, to: projectDirectory, appName: appName, target: target)
+        return projectDirectory
+    }
+
     // MARK: - Private Helpers
 
     /// Creates a directory (and any intermediate directories) if it does not already exist.

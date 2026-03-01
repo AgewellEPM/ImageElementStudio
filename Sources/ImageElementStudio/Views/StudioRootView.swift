@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct StudioRootView: View {
     @ObservedObject var viewModel: StudioViewModel

@@ -166,7 +166,9 @@ final class SimulatorService: ObservableObject {
         guard exitCode == 0 else { return nil }
 
         let url = URL(fileURLWithPath: tempPath)
+        // Best-effort read: simctl may have failed to write the file despite exit code 0.
         let data = try? Data(contentsOf: url)
+        // Best-effort cleanup: temp file may already be removed by the OS.
         try? FileManager.default.removeItem(at: url)
 
         if let data {
@@ -189,6 +191,7 @@ final class SimulatorService: ObservableObject {
     // MARK: - Private Helpers
 
     private func runQuiet(_ command: String) async -> String {
+        #if !APP_STORE
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -210,9 +213,13 @@ final class SimulatorService: ObservableObject {
                 continuation.resume(returning: "")
             }
         }
+        #else
+        return ""
+        #endif
     }
 
     private func runCommand(_ command: String) async -> (exitCode: Int32, output: String) {
+        #if !APP_STORE
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -234,6 +241,9 @@ final class SimulatorService: ObservableObject {
                 continuation.resume(returning: (-1, "Failed: \(error.localizedDescription)"))
             }
         }
+        #else
+        return (exitCode: 1, output: "[App Store build] Shell execution is not available.")
+        #endif
     }
 
     private func shellEscape(_ path: String) -> String {

@@ -206,8 +206,8 @@ extension ScaffoldGenerator {
                     selectedState = nextState
                 } else if let index = inferredStates.firstIndex(of: selectedState) {
                     selectedState = inferredStates[(index + 1) % inferredStates.count]
-                } else {
-                    selectedState = inferredStates[0]
+                } else if let fallback = inferredStates.first {
+                    selectedState = fallback
                 }
                 let line = "\\(Date.now.formatted(date: .omitted, time: .shortened)) \u{2022} \\(control) -> \\(selectedState)"
                 actionLog.insert(line, at: 0)

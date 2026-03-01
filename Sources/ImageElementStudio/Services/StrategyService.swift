@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @MainActor
@@ -337,6 +338,333 @@ final class StrategyService: ObservableObject {
                 text: "Strategy spec ready (\(Int((spec.confidence * 100).rounded()))% confidence). Use Generate Mockups to continue."
             )
         )
+    }
+
+    // MARK: - Mockup & Pipeline Methods
+
+    /// Finalizes the strategy spec (if not yet done) and then generates mockups from it.
+    ///
+    /// - Parameters:
+    ///   - mockupGenerator: Generates the artboard/token/component result from a planner result.
+    ///   - ideaPlanner: Converts the accepted strategy spec into an `IdeaPlannerResult`.
+    ///   - pipelineMode: Current pipeline mode (needed by `finalizeStrategySpec`).
+    ///   - projectName: Active project name.
+    ///   - memoryStore: Project memory store.
+    ///   - acceptedStrategySpec: The latest accepted spec, if any.
+    ///   - mockupStylePreset: Active mockup style preset.
+    ///   - onApplyIdeaPlannerResult: Called with the generated result and spec so the ViewModel can
+    ///     apply artboards, tokens, and components to its published state.
+    func finalizeAndGenerateMockups(
+        mockupGenerator: MockupGenerator,
+        ideaPlanner: IdeaPlanner,
+        pipelineMode: PipelineMode,
+        projectName: String,
+        memoryStore: ProjectMemoryStore,
+        acceptedStrategySpec: StrategySpec?,
+        mockupStylePreset: MockupStylePreset,
+        onApplyIdeaPlannerResult: (IdeaPlannerResult, StrategySpec?, MockupStylePreset) -> Void
+    ) {
+        // Finalize the spec first if one isn't already accepted
+        var resolvedSpec = acceptedStrategySpec
+        if resolvedSpec == nil {
+            finalizeStrategySpec(
+                pipelineMode: pipelineMode,
+                projectName: projectName,
+                memoryStore: memoryStore
+            )
+            // onScopeProduced callback sets the scope but we need the spec; re-derive it
+            if let session = strategySession {
+                resolvedSpec = strategistEngine.finalizeSpec(from: session)
+            }
+        }
+
+        guard let spec = resolvedSpec else { return }
+        let generated = ideaPlanner.generate(from: spec, projectName: projectName)
+        onApplyIdeaPlannerResult(generated, spec, mockupStylePreset)
+
+        onAppendBuilderMessage?(
+            ChatMessage(
+                role: .assistant,
+                text: "Mockups generated from approved strategy spec. Use Build Project or Generate Full Stack next."
+            )
+        )
+    }
+
+    /// Generates wireframes directly from a raw idea string without a full strategy session.
+    ///
+    /// - Parameters:
+    ///   - rawIdea: The raw idea text entered by the user.
+    ///   - ideaPlanner: Converts the idea string into an `IdeaPlannerResult`.
+    ///   - projectName: Active project name.
+    ///   - mockupStylePreset: Active mockup style preset.
+    ///   - onApplyIdeaPlannerResult: Called with the generated result so the ViewModel can update state.
+    func generateWireframesFromIdea(
+        _ rawIdea: String,
+        ideaPlanner: IdeaPlanner,
+        projectName: String,
+        mockupStylePreset: MockupStylePreset,
+        onApplyIdeaPlannerResult: (IdeaPlannerResult, StrategySpec?, MockupStylePreset) -> Void
+    ) {
+        let idea = rawIdea.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !idea.isEmpty else {
+            onAppendBuilderMessage?(
+                ChatMessage(
+                    role: .assistant,
+                    text: "Describe your app idea and I will generate wireframes and a build plan."
+                )
+            )
+            return
+        }
+
+        let generated = ideaPlanner.generate(from: idea, projectName: projectName)
+        onApplyIdeaPlannerResult(generated, nil, mockupStylePreset)
+    }
+
+    /// Convenience wrapper: shows an idea prompt dialog and starts strategy generation.
+    ///
+    /// - Parameter onStart: Called with the trimmed idea text when the user confirms.
+    func promptIdeaAndGenerate(onStart: (String) -> Void) {
+        promptStrategyFromIdea(onStart: onStart)
+    }
+
+    /// Shows an NSAlert with a text field, then calls `onStart` with the entered idea.
+    ///
+    /// - Parameter onStart: Called with the trimmed idea text when the user confirms the dialog.
+    func promptStrategyFromIdea(onStart: (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "Start Strategy From Idea"
+        alert.informativeText =
+            "Describe the product idea. I will run a multi-step strategist interview before generating mockups."
+        alert.alertStyle = .informational
+
+        let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        inputField.placeholderString = "Example: Build a mobile app for booking personal trainers"
+        alert.accessoryView = inputField
+
+        alert.addButton(withTitle: "Start")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+        onStart(inputField.stringValue)
+    }
+
+    /// Applies a finished `IdeaPlannerResult` to the ViewModel's published state.
+    ///
+    /// All state mutations go through the provided callbacks so this method remains testable
+    /// without a live ViewModel.
+    ///
+    /// - Parameters:
+    ///   - generated: The planner result containing artboards, scope, blueprint, and narrative.
+    ///   - sourceLabel: A human-readable label for the generation source (e.g. `"idea"`, `"strategy-spec"`).
+    ///   - strategySpec: The accepted strategy spec, if any (used during mockup generation).
+    ///   - stylePreset: The mockup style preset to apply.
+    ///   - mockupGenerator: Produces the tokenized mockup result from the planner result.
+    ///   - projectName: Active project name.
+    ///   - onStateUpdate: Closure receiving the full mockup result so the ViewModel can publish it.
+    ///   - onRecordAnalysis: Closure called to persist an analysis snapshot in memory.
+    ///   - onAppendMessages: Closure called once per chat message that should be shown.
+    ///   - onRunRealtimeBuildSetupIfNeeded: Called after state is applied to trigger realtime build.
+    ///   - onRegenerateJSONPreview: Called to refresh the JSON preview after state is applied.
+    func applyIdeaPlannerResult(
+        _ generated: IdeaPlannerResult,
+        sourceLabel: String,
+        strategySpec: StrategySpec?,
+        stylePreset: MockupStylePreset,
+        mockupGenerator: MockupGenerator,
+        projectName: String,
+        onStateUpdate: (MockupGenerationResult, IdeaPlannerResult) -> Void,
+        onRecordAnalysis: (ProductScopeSnapshot, String, Artboard?) -> Void,
+        onAppendMessages: ([ChatMessage]) -> Void,
+        onRunRealtimeBuildSetupIfNeeded: () -> Void,
+        onRegenerateJSONPreview: () -> Void
+    ) {
+        let mockupResult = mockupGenerator.generate(
+            from: generated,
+            strategySpec: strategySpec,
+            preset: stylePreset
+        )
+
+        // Let the ViewModel apply artboards, tokens, components, and scope.
+        onStateUpdate(mockupResult, generated)
+
+        // Persist an analysis snapshot.
+        onRecordAnalysis(generated.scope, sourceLabel, mockupResult.artboards.first)
+
+        // Post chat messages summarising the generation.
+        let screenNames = mockupResult.artboards.map(\.name).joined(separator: ", ")
+        let designSystemLine = "\(stylePreset.title): \(mockupResult.tokens.colors.count) colors, \(mockupResult.components.count) component groups."
+
+        onAppendMessages([
+            ChatMessage(
+                role: .assistant,
+                text: "Mockup generation active: generated \(generated.artboards.count) wireframe artboards."
+            ),
+            ChatMessage(role: .assistant, text: generated.scope.summary),
+            ChatMessage(role: .assistant, text: generated.narrative),
+        ])
+
+        onAppendBuilderMessage?(
+            ChatMessage(
+                role: .assistant,
+                text: "Mockups ready. Screens: \(screenNames). \(designSystemLine)"
+            )
+        )
+
+        onRunRealtimeBuildSetupIfNeeded()
+        onRegenerateJSONPreview()
+    }
+
+    /// Restyles the current mockup artboards with a new style preset without re-generating content.
+    ///
+    /// - Parameters:
+    ///   - mockupGenerator: Produces the restyled result.
+    ///   - artboards: The current artboard array.
+    ///   - preset: The new style preset to apply.
+    ///   - scope: The product scope snapshot (used as the restyle context).
+    ///   - acceptedStrategySpec: The accepted strategy spec, if any.
+    ///   - onRestyleComplete: Called with the restyle result so the ViewModel can update artboards,
+    ///     tokens, and components and append a token revision.
+    ///   - onRegenerateJSONPreview: Called after the restyle to refresh the JSON preview.
+    func restyleCurrentMockupsForSelectedPreset(
+        mockupGenerator: MockupGenerator,
+        artboards: [Artboard],
+        preset: MockupStylePreset,
+        scope: ProductScopeSnapshot,
+        acceptedStrategySpec: StrategySpec?,
+        onRestyleComplete: (MockupGenerationResult) -> Void,
+        onRegenerateJSONPreview: () -> Void
+    ) {
+        guard artboards.flatMap(\.elements).contains(where: { $0.kind != .imageRoot }) else { return }
+
+        let result = mockupGenerator.restyle(
+            artboards: artboards,
+            scope: scope,
+            strategySpec: acceptedStrategySpec,
+            preset: preset
+        )
+        onRestyleComplete(result)
+        onRegenerateJSONPreview()
+    }
+
+    /// Updates the pipeline mode, persisting the change to memory and strategy session.
+    ///
+    /// - Parameters:
+    ///   - mode: The new pipeline mode.
+    ///   - currentMode: The currently active pipeline mode (no-op if equal to `mode`).
+    ///   - memoryStore: The project memory store.
+    ///   - onModeChanged: Called with the new mode so the ViewModel can update its `@Published` property.
+    ///   - onMemoryUpdated: Called with the updated memory after recording the decision log.
+    func setPipelineMode(
+        _ mode: PipelineMode,
+        currentMode: PipelineMode,
+        memoryStore: ProjectMemoryStore,
+        onModeChanged: (PipelineMode) -> Void,
+        onMemoryUpdated: (ProjectMemory) -> Void
+    ) {
+        guard currentMode != mode else { return }
+        onModeChanged(mode)
+
+        if var session = strategySession {
+            session.pipelineMode = mode
+            strategySession = session
+            onMemoryUpdated(memoryStore.recordStrategySession(session))
+            onMemoryUpdated(
+                memoryStore.recordDecisionLog(
+                    message: "Pipeline mode set to \(mode.title).",
+                    stage: session.stage,
+                    confidence: session.confidence
+                )
+            )
+        } else {
+            onMemoryUpdated(
+                memoryStore.recordDecisionLog(
+                    message: "Pipeline mode set to \(mode.title).",
+                    stage: nil,
+                    confidence: nil
+                )
+            )
+        }
+    }
+
+    /// Returns whether the strategy panel should be presented to the user.
+    ///
+    /// - Parameters:
+    ///   - selectedImage: The currently loaded design image, if any.
+    ///   - latestScope: The latest product scope snapshot, if any.
+    ///   - renderableElementCount: Number of elements on the active artboard.
+    /// - Returns: `true` when the strategy panel should be shown.
+    func shouldShowStrategyPanel(
+        selectedImage: NSImage?,
+        latestScope: ProductScopeSnapshot?,
+        renderableElementCount: Int
+    ) -> Bool {
+        if strategySession != nil {
+            return true
+        }
+        let hasMockups = selectedImage != nil || latestScope != nil || renderableElementCount > 1
+        return !hasMockups
+    }
+
+    // MARK: - Result Structs
+
+    /// Encapsulates all computed values from applying an `IdeaPlannerResult`, so the ViewModel
+    /// can destructure and assign without computing anything itself.
+    struct AppliedIdeaPlannerResult {
+        let mockupResult: MockupGenerationResult
+        let scope: ProductScopeSnapshot
+        let blueprint: BuildBlueprint
+        let imageDescriptor: ImageDescriptor
+        let metadata: AnalysisMetadata
+        let tokenRevision: TokenRevision
+        let chatMessages: [ChatMessage]
+        let builderMessage: ChatMessage
+    }
+
+    /// Computes all derived values from an `IdeaPlannerResult` without touching ViewModel state.
+    static func computeAppliedResult(
+        from generated: IdeaPlannerResult,
+        sourceLabel: String,
+        strategySpec: StrategySpec?,
+        stylePreset: MockupStylePreset,
+        mockupGenerator: MockupGenerator,
+        designSystemStatusLine: String
+    ) -> AppliedIdeaPlannerResult {
+        let mockupResult = mockupGenerator.generate(from: generated, strategySpec: strategySpec, preset: stylePreset)
+        let imageDescriptor = ImageDescriptor(
+            filename: "\(sourceLabel)-wireframe",
+            width: mockupResult.artboards.first?.width ?? 1366,
+            height: mockupResult.artboards.first?.height ?? 900
+        )
+        let metadata = AnalysisMetadata(
+            generatedAt: Date(),
+            engine: "Idea Planner + Mockup Generator",
+            notes: ["Generated wireframes from \(sourceLabel).", "Applied design tokens and semantic component mapping."]
+        )
+        let tokenRevision = TokenRevision(id: UUID(), createdAt: Date(), reason: "Initial generated token set", tokens: mockupResult.tokens)
+        let chatMessages = [
+            ChatMessage(role: .assistant, text: "Mockup generation active: generated \(generated.artboards.count) wireframe artboards."),
+            ChatMessage(role: .assistant, text: generated.scope.summary),
+            ChatMessage(role: .assistant, text: generated.narrative),
+        ]
+        let builderMessage = ChatMessage(role: .assistant, text: "Mockups ready. Screens: \(mockupResult.artboards.map(\.name).joined(separator: ", ")). \(designSystemStatusLine)")
+        return AppliedIdeaPlannerResult(
+            mockupResult: mockupResult, scope: generated.scope, blueprint: generated.blueprint,
+            imageDescriptor: imageDescriptor, metadata: metadata, tokenRevision: tokenRevision,
+            chatMessages: chatMessages, builderMessage: builderMessage
+        )
+    }
+
+    /// Restyles artboards with a new preset, returning the result directly (nil if no non-imageRoot elements exist).
+    func restyleResult(
+        mockupGenerator: MockupGenerator,
+        artboards: [Artboard],
+        preset: MockupStylePreset,
+        scope: ProductScopeSnapshot,
+        acceptedStrategySpec: StrategySpec?
+    ) -> MockupGenerationResult? {
+        guard artboards.flatMap(\.elements).contains(where: { $0.kind != .imageRoot }) else { return nil }
+        return mockupGenerator.restyle(artboards: artboards, scope: scope, strategySpec: acceptedStrategySpec, preset: preset)
     }
 
     // MARK: - Private Helpers

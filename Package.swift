@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "ImageElementStudio",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14),
     ],
@@ -15,11 +16,14 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "ImageElementStudio"
+            name: "ImageElementStudio",
+            path: "Sources/ImageElementStudio"
         ),
         .testTarget(
             name: "ImageElementStudioTests",
-            dependencies: ["ImageElementStudio"]
+            dependencies: ["ImageElementStudio"],
+            path: "Tests/ImageElementStudioTests"
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

@@ -38,6 +38,55 @@ final class ChatService: ObservableObject {
         let projectName: String
     }
 
+    /// Registry that holds all builder command handlers and supporting data,
+    /// replacing the previous 30+ individual closure parameters.
+    struct BuilderCommandRegistry {
+        // MARK: - Command handlers
+
+        var onSetPipelineMode: (PipelineMode) -> Void = { _ in }
+        var onGenerateFullStackBuild: () -> Void = {}
+        var onRunBuilderBuildCommand: () -> Void = {}
+        var onRunBuilderAnalyzeCommand: () -> Void = {}
+        var onAddArtboard: () -> Void = {}
+        var onGenerateStateArtboards: () -> Void = {}
+        var onDistributeHorizontally: () -> Void = {}
+        var onDistributeVertically: () -> Void = {}
+        var onSpaceHorizontally: (CGFloat) -> Void = { _ in }
+        var onSpaceVertically: (CGFloat) -> Void = { _ in }
+        var onCreateComponent: () -> Void = {}
+        var onCreateComponentInstance: () -> Void = {}
+        var onRunBenchmark: () -> Void = {}
+        var onAutoFixBenchmark: () -> Void = {}
+        var onUpdateInstanceOverride: (String, String) -> Void = { _, _ in }
+        var onApplyOverridesToAll: () -> Void = {}
+        var onRollbackTokenRevision: (UUID?) -> Void = { _ in }
+        var onExportInterop: () -> Void = {}
+        var onSetReviewApprovalState: (ReviewApprovalState) -> Bool = { _ in true }
+        var onDuplicateArtboard: () -> Void = {}
+        var onExportJSON: () -> Void = {}
+        var onSaveProject: () -> Void = {}
+        var onClearProjectMemory: () -> Void = {}
+        var onCreateNewProject: () -> Void = {}
+        var onStartStrategy: (String) -> Void = { _ in }
+        var onContinueStrategy: () -> Void = {}
+        var onFinalizeSpec: () -> Void = {}
+        var onGenerateMockups: () -> Void = {}
+        var onApproveCurrentStage: () -> Void = {}
+        var onSkipQuestion: () -> Void = {}
+        var onAutoRunStrategy: () -> Void = {}
+        var onSubmitStrategyAnswer: (String) -> Void = { _ in }
+
+        // MARK: - Supporting data
+
+        var distributionGap: CGFloat = 10
+        var tokenRevisions: [TokenRevision] = []
+        var latestBenchmarkReport: BenchmarkRunReport?
+        var benchmarkStatusLine: String = ""
+        var buildStatusSummary: String = ""
+        var latestEnterpriseReadinessReport: EnterpriseReadinessReport?
+        var latestBlueprint: BuildBlueprint?
+    }
+
     // MARK: - Initialization
 
     init(projectName: String) {
@@ -68,45 +117,7 @@ final class ChatService: ObservableObject {
 
     func sendBuilderPrompt(
         context: BuilderCommandContext,
-        onSetPipelineMode: @escaping (PipelineMode) -> Void,
-        onGenerateFullStackBuild: @escaping () -> Void,
-        onRunBuilderBuildCommand: @escaping () -> Void,
-        onRunBuilderAnalyzeCommand: @escaping () -> Void,
-        onAddArtboard: @escaping () -> Void,
-        onGenerateStateArtboards: @escaping () -> Void,
-        onDistributeHorizontally: @escaping () -> Void,
-        onDistributeVertically: @escaping () -> Void,
-        onSpaceHorizontally: @escaping (CGFloat) -> Void,
-        onSpaceVertically: @escaping (CGFloat) -> Void,
-        onCreateComponent: @escaping () -> Void,
-        onCreateComponentInstance: @escaping () -> Void,
-        onRunBenchmark: @escaping () -> Void,
-        onAutoFixBenchmark: @escaping () -> Void,
-        onUpdateInstanceOverride: @escaping (String, String) -> Void,
-        onApplyOverridesToAll: @escaping () -> Void,
-        onRollbackTokenRevision: @escaping (UUID?) -> Void,
-        onExportInterop: @escaping () -> Void,
-        onSetReviewApprovalState: @escaping (ReviewApprovalState) -> Bool,
-        onDuplicateArtboard: @escaping () -> Void,
-        onExportJSON: @escaping () -> Void,
-        onSaveProject: @escaping () -> Void,
-        onClearProjectMemory: @escaping () -> Void,
-        onCreateNewProject: @escaping () -> Void,
-        onStartStrategy: @escaping (String) -> Void,
-        onContinueStrategy: @escaping () -> Void,
-        onFinalizeSpec: @escaping () -> Void,
-        onGenerateMockups: @escaping () -> Void,
-        onApproveCurrentStage: @escaping () -> Void,
-        onSkipQuestion: @escaping () -> Void,
-        onAutoRunStrategy: @escaping () -> Void,
-        onSubmitStrategyAnswer: @escaping (String) -> Void,
-        distributionGap: CGFloat,
-        tokenRevisions: [TokenRevision],
-        latestBenchmarkReport: BenchmarkRunReport?,
-        benchmarkStatusLine: String,
-        buildStatusSummary: String,
-        latestEnterpriseReadinessReport: EnterpriseReadinessReport?,
-        latestBlueprint: BuildBlueprint?
+        registry: BuilderCommandRegistry
     ) {
         let trimmed = builderDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -118,19 +129,19 @@ final class ChatService: ObservableObject {
 
         // Pipeline mode commands
         if normalized.contains("set mode auto") || normalized == "mode auto" {
-            onSetPipelineMode(.auto)
+            registry.onSetPipelineMode(.auto)
             builderMessages.append(ChatMessage(role: .assistant, text: "Pipeline mode set to Auto."))
             return
         }
 
         if normalized.contains("set mode guided") || normalized == "mode guided" {
-            onSetPipelineMode(.guided)
+            registry.onSetPipelineMode(.guided)
             builderMessages.append(ChatMessage(role: .assistant, text: "Pipeline mode set to Guided."))
             return
         }
 
         if normalized.contains("set mode hybrid") || normalized == "mode hybrid" {
-            onSetPipelineMode(.hybrid)
+            registry.onSetPipelineMode(.hybrid)
             builderMessages.append(ChatMessage(role: .assistant, text: "Pipeline mode set to Hybrid."))
             return
         }
@@ -141,18 +152,18 @@ final class ChatService: ObservableObject {
             || normalized.contains("build full stack")
             || normalized.contains("generate full app")
             || normalized.contains("full stack") {
-            onGenerateFullStackBuild()
+            registry.onGenerateFullStackBuild()
             return
         }
 
         // Enterprise report
         if normalized.contains("enterprise") && normalized.contains("report") {
-            if let latestEnterpriseReadinessReport {
-                let score = Int(latestEnterpriseReadinessReport.score.rounded())
+            if let report = registry.latestEnterpriseReadinessReport {
+                let score = Int(report.score.rounded())
                 builderMessages.append(
                     ChatMessage(
                         role: .assistant,
-                        text: "Enterprise report: \(latestEnterpriseReadinessReport.status.rawValue.capitalized) (\(score))."
+                        text: "Enterprise report: \(report.status.rawValue.capitalized) (\(score))."
                     )
                 )
             } else {
@@ -165,7 +176,7 @@ final class ChatService: ObservableObject {
         if normalized == "build" || normalized.contains("build it") || normalized.contains("run build") {
             runBuilderBuildCommand(
                 context: context,
-                onRunBuild: onRunBuilderBuildCommand
+                onRunBuild: registry.onRunBuilderBuildCommand
             )
             return
         }
@@ -174,71 +185,71 @@ final class ChatService: ObservableObject {
         if normalized.contains("analyze") {
             runBuilderAnalyzeCommand(
                 context: context,
-                onRunAnalyze: onRunBuilderAnalyzeCommand
+                onRunAnalyze: registry.onRunBuilderAnalyzeCommand
             )
             return
         }
 
         // Artboard commands
         if normalized.contains("new artboard") {
-            onAddArtboard()
+            registry.onAddArtboard()
             builderMessages.append(ChatMessage(role: .assistant, text: "Created a new artboard and saved a project snapshot."))
             return
         }
 
         if normalized.contains("state artboard") || normalized.contains("generate states") {
-            guard latestBlueprint != nil else {
+            guard registry.latestBlueprint != nil else {
                 builderMessages.append(ChatMessage(role: .assistant, text: "Run analyze/build first so I can infer controls and states."))
                 return
             }
-            onGenerateStateArtboards()
+            registry.onGenerateStateArtboards()
             builderMessages.append(ChatMessage(role: .assistant, text: "Generated suggested state artboards from the current mirror blueprint."))
             return
         }
 
         // Distribution commands
         if normalized.contains("distribute h") || normalized.contains("distribute horizontal") {
-            onDistributeHorizontally()
+            registry.onDistributeHorizontally()
             builderMessages.append(ChatMessage(role: .assistant, text: "Applied horizontal distribution on selected elements."))
             return
         }
 
         if normalized.contains("distribute v") || normalized.contains("distribute vertical") {
-            onDistributeVertically()
+            registry.onDistributeVertically()
             builderMessages.append(ChatMessage(role: .assistant, text: "Applied vertical distribution on selected elements."))
             return
         }
 
         if normalized.contains("space horizontal") {
-            onSpaceHorizontally(distributionGap)
-            builderMessages.append(ChatMessage(role: .assistant, text: "Applied horizontal spacing gap \(Int(distributionGap))."))
+            registry.onSpaceHorizontally(registry.distributionGap)
+            builderMessages.append(ChatMessage(role: .assistant, text: "Applied horizontal spacing gap \(Int(registry.distributionGap))."))
             return
         }
 
         if normalized.contains("space vertical") {
-            onSpaceVertically(distributionGap)
-            builderMessages.append(ChatMessage(role: .assistant, text: "Applied vertical spacing gap \(Int(distributionGap))."))
+            registry.onSpaceVertically(registry.distributionGap)
+            builderMessages.append(ChatMessage(role: .assistant, text: "Applied vertical spacing gap \(Int(registry.distributionGap))."))
             return
         }
 
         // Component commands
         if normalized.contains("create component") {
-            onCreateComponent()
+            registry.onCreateComponent()
             builderMessages.append(ChatMessage(role: .assistant, text: "Created component from current selection."))
             return
         }
 
         if normalized.contains("new instance") || normalized.contains("create instance") {
-            onCreateComponentInstance()
+            registry.onCreateComponentInstance()
             builderMessages.append(ChatMessage(role: .assistant, text: "Created component instance from selected component."))
             return
         }
 
         // Benchmark commands
         if normalized.contains("benchmark") || normalized.contains("pro editing check") {
-            onRunBenchmark()
-            if let report = latestBenchmarkReport {
-                builderMessages.append(ChatMessage(role: .assistant, text: "Benchmark: \(benchmarkStatusLine)."))
+            registry.onRunBenchmark()
+            if let report = registry.latestBenchmarkReport {
+                builderMessages.append(ChatMessage(role: .assistant, text: "Benchmark: \(registry.benchmarkStatusLine)."))
                 if let failed = report.steps.first(where: { !$0.passed }) {
                     builderMessages.append(ChatMessage(role: .assistant, text: "First failing step: \(failed.title) - \(failed.detail)"))
                 }
@@ -247,8 +258,8 @@ final class ChatService: ObservableObject {
         }
 
         if normalized.contains("fix benchmark") || normalized.contains("auto-fix benchmark") {
-            onAutoFixBenchmark()
-            builderMessages.append(ChatMessage(role: .assistant, text: "Auto-fix executed. Benchmark: \(benchmarkStatusLine)."))
+            registry.onAutoFixBenchmark()
+            builderMessages.append(ChatMessage(role: .assistant, text: "Auto-fix executed. Benchmark: \(registry.benchmarkStatusLine)."))
             return
         }
 
@@ -257,7 +268,7 @@ final class ChatService: ObservableObject {
             let payload = String(trimmed.dropFirst("override ".count))
             let parts = payload.split(separator: "=", maxSplits: 1).map { String($0) }
             if parts.count == 2 {
-                onUpdateInstanceOverride(parts[0], parts[1])
+                registry.onUpdateInstanceOverride(parts[0], parts[1])
                 builderMessages.append(ChatMessage(role: .assistant, text: "Applied instance override \(parts[0])."))
             } else {
                 builderMessages.append(ChatMessage(role: .assistant, text: "Use override syntax: override key=value"))
@@ -266,15 +277,15 @@ final class ChatService: ObservableObject {
         }
 
         if normalized.contains("apply overrides all") {
-            onApplyOverridesToAll()
+            registry.onApplyOverridesToAll()
             builderMessages.append(ChatMessage(role: .assistant, text: "Applied selected instance overrides to all sibling instances."))
             return
         }
 
         // Token revision rollback
         if normalized.contains("rollback token") {
-            if let revision = tokenRevisions.last {
-                onRollbackTokenRevision(revision.id)
+            if let revision = registry.tokenRevisions.last {
+                registry.onRollbackTokenRevision(revision.id)
                 builderMessages.append(ChatMessage(role: .assistant, text: "Rolled back to latest token revision snapshot."))
             } else {
                 builderMessages.append(ChatMessage(role: .assistant, text: "No token revision snapshots found yet."))
@@ -284,14 +295,14 @@ final class ChatService: ObservableObject {
 
         // Export commands
         if normalized.contains("export interop") || normalized.contains("export package") {
-            onExportInterop()
+            registry.onExportInterop()
             builderMessages.append(ChatMessage(role: .assistant, text: "Opened export dialog for interop package."))
             return
         }
 
         // Review approval commands
         if normalized.contains("approve review") || normalized.contains("approve") && normalized.contains("review") {
-            if onSetReviewApprovalState(.approved) {
+            if registry.onSetReviewApprovalState(.approved) {
                 builderMessages.append(ChatMessage(role: .assistant, text: "Review state set to approved."))
             } else {
                 builderMessages.append(ChatMessage(role: .assistant, text: "Approval blocked: resolve open comments first."))
@@ -300,40 +311,40 @@ final class ChatService: ObservableObject {
         }
 
         if normalized.contains("request changes") || normalized.contains("changes requested") {
-            _ = onSetReviewApprovalState(.changesRequested)
+            _ = registry.onSetReviewApprovalState(.changesRequested)
             builderMessages.append(ChatMessage(role: .assistant, text: "Review state set to changes requested."))
             return
         }
 
         // Artboard duplication
         if normalized.contains("duplicate artboard") {
-            onDuplicateArtboard()
+            registry.onDuplicateArtboard()
             builderMessages.append(ChatMessage(role: .assistant, text: "Duplicated active artboard and saved a project snapshot."))
             return
         }
 
         // Export JSON
         if normalized.contains("export") && normalized.contains("json") {
-            onExportJSON()
+            registry.onExportJSON()
             builderMessages.append(ChatMessage(role: .assistant, text: "Opened export dialog for JSON."))
             return
         }
 
         // Project management
         if normalized.contains("save project") {
-            onSaveProject()
+            registry.onSaveProject()
             builderMessages.append(ChatMessage(role: .assistant, text: "Opened save dialog for the full project package."))
             return
         }
 
         if normalized.contains("clear memory") || normalized.contains("reset memory") {
-            onClearProjectMemory()
+            registry.onClearProjectMemory()
             builderMessages.append(ChatMessage(role: .assistant, text: "Project memory cleared for '\(context.projectName)'."))
             return
         }
 
         if normalized.contains("new project") {
-            onCreateNewProject()
+            registry.onCreateNewProject()
             builderMessages.append(ChatMessage(role: .assistant, text: "Started a new project with clean memory and workspace."))
             return
         }
@@ -341,27 +352,27 @@ final class ChatService: ObservableObject {
         // Strategy commands
         if normalized.contains("start strategy") {
             let ideaPrompt = extractIdeaPrompt(from: trimmed)
-            onStartStrategy(ideaPrompt)
+            registry.onStartStrategy(ideaPrompt)
             return
         }
 
         if normalized.contains("continue strategy") {
-            onContinueStrategy()
+            registry.onContinueStrategy()
             return
         }
 
         if normalized.contains("finalize spec") {
-            onFinalizeSpec()
+            registry.onFinalizeSpec()
             return
         }
 
         if normalized.contains("generate mockups") {
-            onGenerateMockups()
+            registry.onGenerateMockups()
             return
         }
 
         if normalized.contains("status") || normalized.contains("step") {
-            builderMessages.append(ChatMessage(role: .assistant, text: buildStatusSummary))
+            builderMessages.append(ChatMessage(role: .assistant, text: registry.buildStatusSummary))
             return
         }
 
@@ -377,19 +388,19 @@ final class ChatService: ObservableObject {
                 || normalized == "continue"
                 || normalized == "approve/continue"
                 || normalized == "next stage" {
-                onApproveCurrentStage()
+                registry.onApproveCurrentStage()
                 return
             }
             if normalized == "skip" || normalized.contains("skip question") {
-                onSkipQuestion()
+                registry.onSkipQuestion()
                 return
             }
             if normalized.contains("auto-run") || normalized.contains("autorun") {
-                onAutoRunStrategy()
+                registry.onAutoRunStrategy()
                 return
             }
 
-            onSubmitStrategyAnswer(trimmed)
+            registry.onSubmitStrategyAnswer(trimmed)
             return
         }
 
@@ -400,7 +411,7 @@ final class ChatService: ObservableObject {
             || normalized.contains("i want to build")
             || (context.selectedImage == nil && context.latestScope == nil) {
             let prompt = extractIdeaPrompt(from: trimmed)
-            onStartStrategy(prompt)
+            registry.onStartStrategy(prompt)
             return
         }
 
@@ -424,10 +435,10 @@ final class ChatService: ObservableObject {
                 acceptedStrategySpecs: [],
                 decisionLog: []
             ),
-            benchmarkStatusLine: benchmarkStatusLine,
+            benchmarkStatusLine: registry.benchmarkStatusLine,
             componentInstances: [],
             componentSystemStatusLine: "",
-            latestBlueprint: latestBlueprint,
+            latestBlueprint: registry.latestBlueprint,
             enterpriseReadinessStatusLine: ""
         )
         let fallback = assistantReply(for: trimmed, context: chatContext)

@@ -256,13 +256,142 @@ final class ComponentService: ObservableObject {
         applyOverridesToAllInstances(of: instance.componentID, overrides: instance.overrides, applyToElements: applyToElements)
     }
 
+    // MARK: - Override Propagation
+
+    /// Applies `overrides` to every instance of `componentID`.
+    ///
+    /// This is the public counterpart to `applySelectedInstanceOverridesToAll`.
+    /// The caller is responsible for subsequently calling `applyOverridesToInstanceElements`
+    /// (or its equivalent) for each updated instance.
+    ///
+    /// - Parameters:
+    ///   - componentID: The component whose instances should receive the overrides.
+    ///   - overrides: The override dictionary to write onto every matching instance.
+    ///   - componentInstances: The mutable array of all component instances.
+    func applyOverridesToAllInstances(
+        of componentID: UUID,
+        overrides: [String: String],
+        componentInstances: inout [ComponentInstance]
+    ) {
+        guard !overrides.isEmpty else { return }
+        let targetIDs = componentInstances.filter { $0.componentID == componentID }.map(\.id)
+        for instanceID in targetIDs {
+            guard let index = componentInstances.firstIndex(where: { $0.id == instanceID }) else { continue }
+            componentInstances[index].overrides = overrides
+        }
+    }
+
+    /// Pushes the overrides stored on `instance` down onto the artboard elements it owns.
+    ///
+    /// Supported override keys:
+    /// - `"content"` / `"text"` — sets the text content on `.text` elements.
+    /// - `"name"` — renames the element when non-empty.
+    /// - `"fill"` — sets the fill colour (hex strings are normalised automatically).
+    /// - `"opacity"` — clamps the opacity to the range `[0.05, 1]`.
+    /// - anything else — written as a tag in the form `"override:<key>"`.
+    ///
+    /// - Parameters:
+    ///   - instance: The component instance whose overrides should be applied.
+    ///   - artboards: The mutable artboard array.
+    ///   - activeArtboardIndex: Index of the active artboard (used to limit search scope when non-nil).
+    ///   - latestDesignTokens: Current token set (unused here but available for future extensions).
+    ///   - latestComponentSpecs: Current component specs (unused here but available for future extensions).
+    func applyOverridesToInstanceElements(
+        _ instance: ComponentInstance,
+        artboards: inout [Artboard],
+        activeArtboardIndex: Int?,
+        latestDesignTokens: DesignTokenSet?,
+        latestComponentSpecs: [ComponentSpec]
+    ) {
+        for boardIndex in artboards.indices {
+            guard artboards[boardIndex].id == instance.artboardID else { continue }
+            for elementIndex in artboards[boardIndex].elements.indices
+                where instance.elementIDs.contains(artboards[boardIndex].elements[elementIndex].id)
+            {
+                var element = artboards[boardIndex].elements[elementIndex]
+                for (key, value) in instance.overrides {
+                    switch key {
+                    case "content", "text":
+                        if element.kind == .text {
+                            element.content = value
+                        }
+                    case "name":
+                        if !value.isEmpty {
+                            element.name = value
+                        }
+                    case "fill":
+                        var style = element.style ?? ElementVisualStyle(
+                            fill: nil, stroke: nil, cornerRadius: nil, opacity: nil, typography: nil
+                        )
+                        let hex = normalizedHexInternal(value)
+                        style.fill = ElementFillStyle(
+                            color: hex.isEmpty ? value : hex,
+                            gradient: style.fill?.gradient
+                        )
+                        element.style = style
+                    case "opacity":
+                        if let number = Double(value) {
+                            var style = element.style ?? ElementVisualStyle(
+                                fill: nil, stroke: nil, cornerRadius: nil, opacity: nil, typography: nil
+                            )
+                            style.opacity = max(0.05, min(1, number))
+                            element.style = style
+                        }
+                    default:
+                        var tags = Set(element.tags)
+                        tags.insert("override:\(key)")
+                        element.tags = tags.sorted()
+                    }
+                }
+                artboards[boardIndex].elements[elementIndex] = element
+            }
+        }
+    }
+
+    // MARK: - Variant Matrix
+
+    /// Returns a preview of variant combinations for the given component spec (up to 12 rows).
+    ///
+    /// Each string in the returned array describes one variant row in the form
+    /// `"axis1=option1 | axis2=option2 | ..."`.
+    ///
+    /// - Parameter spec: The component spec to generate the matrix for, or `nil` to return `[]`.
+    /// - Returns: An array of human-readable variant combination strings.
+    func variantMatrixPreview(for spec: ComponentSpec?) -> [String] {
+        guard let spec, let axes = spec.variantAxes, !axes.isEmpty else { return [] }
+        let sortedAxes = axes.keys.sorted()
+        var rows: [[String: String]] = [[:]]
+        for axis in sortedAxes {
+            let options = axes[axis] ?? []
+            if options.isEmpty { continue }
+            rows = rows.flatMap { existing in
+                options.map { option in
+                    var entry = existing
+                    entry[axis] = option
+                    return entry
+                }
+            }
+        }
+        return rows.prefix(12).map { row in
+            sortedAxes.map { axis in "\(axis)=\(row[axis] ?? "")" }.joined(separator: " | ")
+        }
+    }
+
     // MARK: - Private Helpers
 
-    /// Applies overrides to all instances of a specific component
-    /// - Parameters:
-    ///   - componentID: The component ID
-    ///   - overrides: The overrides to apply
-    ///   - applyToElements: Closure to apply overrides to artboard elements (called after each update)
+    /// Internal hex normalisation that mirrors `DesignTokenService.normalizedHex` without
+    /// creating a cross-service dependency.
+    private func normalizedHexInternal(_ raw: String) -> String {
+        let cleaned = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+            .uppercased()
+        guard cleaned.count == 6, cleaned.allSatisfy(\.isHexDigit) else { return "" }
+        return "#\(cleaned)"
+    }
+
+    /// Internal version of `applyOverridesToAllInstances` used by the existing
+    /// `applySelectedInstanceOverridesToAll` method (which passes a callback).
     private func applyOverridesToAllInstances(
         of componentID: UUID,
         overrides: [String: String],

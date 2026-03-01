@@ -356,9 +356,23 @@ final class BuildPipelineCoordinator: ObservableObject {
             steps[index].state = state
             steps[index].detail = detail
         }
+
+        switch state {
+        case .active:
+            AppLogger.info("Pipeline step started: \(step.rawValue)", category: .build)
+        case .succeeded:
+            AppLogger.info("Pipeline step succeeded: \(step.rawValue)\(detail.map { " (\($0))" } ?? "")", category: .build)
+        case .failed:
+            AppLogger.error("Pipeline step failed: \(step.rawValue)\(detail.map { " - \($0)" } ?? "")", category: .build)
+        case .skipped:
+            AppLogger.debug("Pipeline step skipped: \(step.rawValue)\(detail.map { " - \($0)" } ?? "")", category: .build)
+        case .pending:
+            break
+        }
     }
 
     private func failPipeline(after failedStep: PipelineStep, error: String) -> Bool {
+        AppLogger.error("Pipeline failed after \(failedStep.rawValue): \(error)", category: .build)
         pipelineError = error
 
         // Skip all remaining steps after the failed one
@@ -450,11 +464,18 @@ final class BuildPipelineCoordinator: ObservableObject {
             let filePath = projectDirectory.appendingPathComponent(file.relativePath)
             let directory = filePath.deletingLastPathComponent()
 
-            // Ensure parent directory exists
-            try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            do {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                AppLogger.error("Failed to create directory \(directory.path): \(error.localizedDescription)", category: .build)
+                continue
+            }
 
-            // Write file content
-            try? file.content.write(to: filePath, atomically: true, encoding: .utf8)
+            do {
+                try file.content.write(to: filePath, atomically: true, encoding: .utf8)
+            } catch {
+                AppLogger.error("Failed to write file \(filePath.path): \(error.localizedDescription)", category: .build)
+            }
         }
     }
 

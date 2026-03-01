@@ -3,10 +3,35 @@ import SwiftUI
 @main
 struct ImageElementStudioApp: App {
     @StateObject private var viewModel = StudioViewModel()
+    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
+    @State private var showOnboarding = false
+
+    init() {
+        // Migrate any API keys that were previously stored in UserDefaults
+        // into the Keychain. This runs once and removes the UserDefaults entries.
+        KeychainService.migrateKeysFromUserDefaultsIfNeeded()
+    }
 
     var body: some Scene {
         WindowGroup("Image Element Studio") {
             StudioRootView(viewModel: viewModel)
+                .sheet(isPresented: $showOnboarding) {
+                    OnboardingView(isPresented: Binding(
+                        get: { showOnboarding },
+                        set: { newValue in
+                            showOnboarding = newValue
+                            if !newValue {
+                                onboardingCompleted = true
+                            }
+                        }
+                    ))
+                    .interactiveDismissDisabled()
+                }
+                .onAppear {
+                    if !onboardingCompleted {
+                        showOnboarding = true
+                    }
+                }
         }
         .windowResizability(.contentMinSize)
         .commands {
@@ -16,6 +41,11 @@ struct ImageElementStudioApp: App {
         Settings {
             SettingsView()
         }
+
+        Window("About Image Element Studio", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
     }
 }
 

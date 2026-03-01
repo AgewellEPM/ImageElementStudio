@@ -1,88 +1,161 @@
 # ImageElementStudio
 
-Simple macOS SwiftUI app with:
+![Swift 6.2](https://img.shields.io/badge/Swift-6.2-orange) ![macOS 14+](https://img.shields.io/badge/macOS-14.0%2B-blue) ![Tests 382](https://img.shields.io/badge/tests-382-brightgreen) ![Zero Dependencies](https://img.shields.io/badge/dependencies-0-green) ![License MIT](https://img.shields.io/badge/license-MIT-lightgrey)
 
-- macOS menu-bar commands: new project, upload, analyze, save project, export JSON, build target
-- Left pane: project progress and notes
-- Middle pane: original design vs app emulator preview, builder chat
-- Right pane: project memory, artboards, elements, and edit controls
-- Idea-first mode: describe the app in chat (or menu command) to auto-generate wireframe artboards + scope + states
+A macOS SwiftUI application that transforms design screenshots and text-based ideas into production-ready code scaffolds for iOS, macOS, and web platforms. Upload a PNG, describe an app idea, or import a Figma file -- ImageElementStudio analyzes, infers semantics, generates blueprints, and exports runnable multi-platform code.
 
-## Run
+## Quick Start
 
 ```bash
-cd /Users/luke/ImageElementStudio
+# Build
+swift build
+
+# Run the app
+swift run
+
+# Run all 382 tests
+swift test
+
+# Build and test via Makefile
+make all
+```
+
+### Open in Xcode
+
+1. Open Xcode and choose **File > Open**.
+2. Select the `ImageElementStudio` directory.
+3. Run the `ImageElementStudio` scheme.
+
+### API Key Setup
+
+AI-powered code generation requires an Anthropic API key. Set it via the Settings view (menu bar) or environment variable:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
 swift run
 ```
 
-## Open in Xcode
-
-1. Open Xcode.
-2. Choose **File > Open**.
-3. Select `/Users/luke/ImageElementStudio`.
-4. Run the `ImageElementStudio` scheme.
-
-## Current Analysis Behavior
-
-- Text blocks from Vision OCR
-- Rectangle candidates from Vision rectangle detection
-- Semantic role mapping (navigation, KPI, chart, table, CTA, etc.)
-- Product scope inference (app type, intent, capabilities, roadmap)
-- Mirror blueprint inference (controls, states, suggested artboards, mirror score)
-- Auto-generated state artboards from a single screenshot
-- Idea-to-wireframe generation (no design file required)
-- Project-scoped memory snapshots at `~/Library/Application Support/ImageElementStudio/projects/<project-id>/project-memory.json`
-- Automatic snapshots whenever artboards are added, duplicated, removed, reset, or analyzed
-- Clear memory action in menu and sidebar (`Clear Project Memory` / `Clear Memory`)
-- Structured JSON export/edit loop from the active artboard
-- Build setup output now includes starter scaffold files for iOS, macOS, and Web targets
-- Build setup now also emits `full-app/` runnable app bundles per selected target
-- Full-stack runs now emit one deterministic bundle for all targets (`web`, `ios`, `macos`) under a single timestamped run folder
-- Generated full apps now include state transitions, control actions, capability cards, and activity logs
-- Generated full apps are now multi-screen by default with state/artboard-driven navigation panels
-- Each full app target now includes `app-spec.json` with inferred states, controls, capabilities, and transitions
-- Full-stack runs emit `full-stack-summary.json` with per-target pass/fail, smoke/full-app pass rates, and aggregate score
-- Full-stack runs also emit `run-full-app-checks.sh` for CI-style revalidation of generated web/iOS/macOS outputs
-- Full-stack runs emit `enterprise-readiness-report.json` with weighted checks, blockers, and recommended actions
-- Realtime build mode: auto-analyze imports and continuously refresh scaffold output
-- Pro editing core: multi-select, marquee selection, distribute/space, resize/rotate handles, and keyboard shortcuts
-- Pro editing benchmark runner with history, pass-rate trend chart, median latency tracking, and auto-fix/re-run support
-- Benchmark trend direction indicator (improving/stable/regressing) and per-run median latency preview
-- Standalone benchmark trend artifact exported on each build run (`benchmark-trend-report.json`)
-- Smoke checks now validate full-app bundles and full-app `app-spec.json` integrity
-- Component system: component creation, instances, variant axes/state mapping, and instance overrides
-- Token revision history with rollback and global token propagation
-- Interop fidelity diagnostics: structured import style mapping + import loss report
-- Production quality artifacts: deterministic manifest hash, smoke checks, design-code diff report, and deterministic snapshot tests
-- Collaboration flow: review comments + approval states, plus approval gate blocking build/interop export until approved
-- Review panel now supports resolve/reopen/delete comments and bulk resolve/clear actions
-- Review comments support assignee + due date metadata with overdue highlighting
-- CI-style quality gate summary combines smoke checks, drift diffs, benchmark trend, and review gate into one score
-
-## New Menus
-
-- `Edit Layout`: nudge/fine nudge, rotate, distribute, run pro editing benchmark
-- `Components`: create component, create instance, export interop package
-- `Review`: pending/approved/changes-requested states
-
-## Optional OpenAI Vision Enrichment
-
-Set an API key before launch to enable remote multimodal interpretation:
+Optional OpenAI key enables enhanced semantic analysis:
 
 ```bash
-export OPENAI_API_KEY="your_key_here"
-cd /Users/luke/ImageElementStudio
-swift run
+export OPENAI_API_KEY="sk-..."
 ```
 
-## Supported Imports
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full configuration details.
 
-- Raster: PNG, JPG/JPEG, HEIC, TIFF, GIF (plus any format NSImage can read)
-- Design/vector: PDF, AI, EPS, SVG (via QuickLook fallback when needed)
-- Structured: FIG/JSON where node geometry is readable (imports layers as elements)
+## Features
 
-If a proprietary design file cannot be parsed directly, export from Figma/Illustrator as PNG/PDF/SVG for best mirror fidelity.
+### Design Analysis Pipeline
+- **Vision OCR** and rectangle detection for UI element extraction
+- **Semantic role mapping**: navigation, KPI, chart, table, CTA, heading, and 20+ roles
+- **Product scope inference**: app type, intent, capabilities, roadmap
+- **Blueprint inference**: controls, states, suggested artboards, mirror score
 
-## Docs
+### Idea-to-App Generation
+- Describe an app idea in chat or via menu command
+- Strategy interview flow refines vision, users, features, and scope
+- Auto-generates wireframe artboards with tokenized design elements
+- No design file required
 
-- Workflow and memory details: `docs/STUDIO_WORKFLOW.md`
+### Multi-Platform Build Export
+- **iOS**: SwiftUI app with XcodeGen project configuration
+- **macOS**: SwiftUI app with Swift Package Manager
+- **Web**: HTML/CSS/JS with optional Node.js build
+- Full-stack runs generate all three targets in a single timestamped bundle
+
+### AI Code Generation
+- Claude-powered multi-file app generation (Sonnet for speed, Opus for quality)
+- Architecture planning, sequential file generation, and automatic validation
+- Code validation: balanced braces, required imports, AI artifact detection
+- Auto-fix loop: up to 3 AI-assisted attempts to resolve build errors
+
+### Pro Editing
+- Multi-select, marquee selection, alignment (6 directions), distribution
+- Resize handles, rotation, snap-to-grid, keyboard shortcuts
+- Component system with variant axes, state mapping, and instance overrides
+- Design token editing with revision history and rollback
+
+### Supported Imports
+- **Raster**: PNG, JPG/JPEG, HEIC, TIFF, GIF (any format NSImage supports)
+- **Vector**: PDF, AI, EPS, SVG (via QuickLook fallback)
+- **Structured**: FIG/JSON with node geometry (imports layers as elements with style metadata)
+
+## Enterprise Features
+
+### Quality Gates
+- CI-style quality gate combining smoke checks, design-code diffs, benchmarks, and review approval into a composite score (0-100)
+- Configurable pass (85+), warning (65-84), and fail (<65) thresholds
+- Blocking issue detection: smoke pass rate, high-impact drifts, unapproved reviews, overdue comments
+
+### Build Quality Artifacts
+- Deterministic manifest hashing (SHA256 via CryptoKit) for reproducible builds
+- Smoke checks validating scaffold and full-app output integrity
+- Design-code diff reports measuring drift between design intent and generated code
+- `enterprise-readiness-report.json` with weighted checks, blockers, and recommended actions
+
+### Benchmark System
+- Pro editing benchmark runner measuring alignment, distribution, resize, rotation, and selection operations
+- History tracking (up to 40 runs) with trend scoring (improving/stable/regressing)
+- Median latency tracking and pass-rate trend charts
+- Standalone `benchmark-trend-report.json` artifact on each build run
+
+### Review and Collaboration
+- Review comments with assignee, due date, and overdue highlighting
+- Approval gate (pending/approved/changes-requested) blocking build export until approved
+- Bulk resolve/clear actions
+- Review gate integrated into quality score
+
+### Interop and Export
+- Full project package save/load (JSON)
+- Interop export packages with design tokens, components, benchmarks, and review state
+- Import loss reports quantifying fidelity loss from structured design imports
+- `full-stack-summary.json` with per-target pass/fail and aggregate scores
+
+## Architecture
+
+Three-column SwiftUI layout driven by `StudioViewModel` coordinating 12+ domain services, 9 pipeline engines, and Xcode build toolchain integration. Services are stateless -- cross-service coordination flows through the ViewModel via Combine forwarding and callback closures.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full dependency graph and data flow.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, service graph, data flow, key patterns |
+| [CONFIGURATION.md](docs/CONFIGURATION.md) | Build requirements, API keys, file paths, pipeline modes |
+| [STUDIO_WORKFLOW.md](docs/STUDIO_WORKFLOW.md) | Menu actions, project memory model, save/export behavior |
+| [TESTING.md](docs/TESTING.md) | Test suite overview, patterns, coverage, how to add tests |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common errors and solutions |
+| [SECURITY.md](docs/SECURITY.md) | API key storage, data handling, network security, sandboxing |
+
+## Requirements
+
+| Requirement | Minimum |
+|-------------|---------|
+| macOS       | 14.0 (Sonoma) |
+| Swift       | 6.2 |
+| Xcode       | 16+ (for iOS build pipeline) |
+
+Zero external dependencies -- uses only Apple system frameworks (SwiftUI, AppKit, Vision, Security, CryptoKit, UniformTypeIdentifiers, PDFKit, QuickLookThumbnailing).
+
+## Project Structure
+
+```
+Sources/ImageElementStudio/
+  |-- Models/          12 model files (canvas, analysis, build, tokens, etc.)
+  |-- Services/        12 service files + scaffold generators
+  |-- Pipeline/         9 engine files (analysis, semantic, blueprint, mockup)
+  |-- AI/               7 files (Claude API, code generation, validation, prompts)
+  |-- Xcode/            3 files (build pipeline, simulator, toolchain)
+  |-- Persistence/      1 file (project memory store)
+  |-- Views/           17 SwiftUI view files
+  |-- StudioViewModel   7 files (core + 6 domain extensions)
+  |-- Constants.swift   Centralized magic numbers
+
+Tests/ImageElementStudioTests/
+  |-- 22 test files    382 unit tests across 22 test suites
+```
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

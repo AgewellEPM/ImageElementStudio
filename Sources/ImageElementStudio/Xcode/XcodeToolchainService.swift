@@ -81,7 +81,9 @@ final class XcodeToolchainService: ObservableObject {
 
     // MARK: - Private
 
+    #if !APP_STORE
     private var buildProcess: Process?
+    #endif
 
     // MARK: - Toolchain Detection
 
@@ -198,6 +200,7 @@ final class XcodeToolchainService: ObservableObject {
     }
 
     private func runStreamingCommand(_ command: String) async -> (exitCode: Int32, output: String) {
+        #if !APP_STORE
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -245,9 +248,13 @@ final class XcodeToolchainService: ObservableObject {
                 continuation.resume(returning: (-1, "Failed to launch process: \(error.localizedDescription)"))
             }
         }
+        #else
+        return (exitCode: 1, output: "[App Store build] Shell execution is not available.")
+        #endif
     }
 
     private func runQuiet(_ command: String) async -> String {
+        #if !APP_STORE
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -269,9 +276,13 @@ final class XcodeToolchainService: ObservableObject {
                 continuation.resume(returning: "")
             }
         }
+        #else
+        return ""
+        #endif
     }
 
     private func runCommand(_ command: String) async -> (exitCode: Int32, output: String) {
+        #if !APP_STORE
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -293,6 +304,9 @@ final class XcodeToolchainService: ObservableObject {
                 continuation.resume(returning: (-1, "Failed: \(error.localizedDescription)"))
             }
         }
+        #else
+        return (exitCode: 1, output: "[App Store build] Shell execution is not available.")
+        #endif
     }
 
     private func classifyLine(_ line: String) -> BuildOutputLine.Kind {
@@ -306,10 +320,10 @@ final class XcodeToolchainService: ObservableObject {
     }
 
     private func parseDiagnostic(from line: String, kind: BuildDiagnostic.Kind) -> BuildDiagnostic? {
+        // Patterns are built from enum raw values ("error"/"warning") so regex compilation always succeeds.
         let pattern = "^(.+?):(\\d+):(\\d+): \(kind.rawValue): (.+)$"
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else {
-            // Also match simple format: "error: message"
             let simplePattern = "^\(kind.rawValue): (.+)$"
             if let simpleRegex = try? NSRegularExpression(pattern: simplePattern),
                let simpleMatch = simpleRegex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),

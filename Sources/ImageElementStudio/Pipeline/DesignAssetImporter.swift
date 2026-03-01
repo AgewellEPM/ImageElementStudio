@@ -50,6 +50,7 @@ struct DesignAssetImporter {
             )
         }
 
+        // Best-effort structured parse: falls through to QuickLook thumbnail if this fails.
         if ["fig", "json"].contains(extensionName),
            let structured = try? parseStructuredDesign(from: url) {
             return ImportedDesignAsset(
@@ -61,6 +62,7 @@ struct DesignAssetImporter {
             )
         }
 
+        // Best-effort QuickLook fallback: throws unsupported if this also fails.
         if let thumbnail = try? await quickLookThumbnail(from: url) {
             return ImportedDesignAsset(
                 filename: filename,

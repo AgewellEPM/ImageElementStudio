@@ -28,7 +28,7 @@ final class DesignTokenService: ObservableObject {
             acceptedStrategySpec: acceptedStrategySpec,
             mockupStylePreset: mockupStylePreset
         ) else { return }
-        let normalized = normalizedHex(value)
+        let normalized = _normalizedHex(value)
         guard !normalized.isEmpty else { return }
         captureTokenRevision(
             reason: "Update token color \(key)",
@@ -67,14 +67,14 @@ final class DesignTokenService: ObservableObject {
             acceptedStrategySpec: acceptedStrategySpec,
             mockupStylePreset: mockupStylePreset
         )
-        tokens.radius[key] = min(28, max(2, value))
+        tokens.radius[key] = min(Constants.TokenRadius.maxValue, max(Constants.TokenRadius.minValue, value))
         latestDesignTokens = tokens
         propagateGlobalTokenChanges()
     }
 
     func tokenTypographySize(_ key: String, fallback: Double) -> Double {
         guard let tokens = latestDesignTokens else { return fallback }
-        return typographySize(from: tokens.typography[key], fallback: fallback)
+        return _typographySize(from: tokens.typography[key], fallback: fallback)
     }
 
     func updateTokenTypographySize(
@@ -99,7 +99,7 @@ final class DesignTokenService: ObservableObject {
             acceptedStrategySpec: acceptedStrategySpec,
             mockupStylePreset: mockupStylePreset
         )
-        tokens.typography[key] = replacingTypographySize(in: base, with: value)
+        tokens.typography[key] = _replacingTypographySize(in: base, with: value)
         latestDesignTokens = tokens
         propagateGlobalTokenChanges()
     }
@@ -112,6 +112,107 @@ final class DesignTokenService: ObservableObject {
 
     func clearTokenRevisionHistory() {
         tokenRevisions = []
+    }
+
+    // MARK: - Public Token Propagation
+
+    /// Propagates a changed token set across all artboard elements and component specs.
+    ///
+    /// Call this after modifying `latestDesignTokens` to push colour, stroke, and radius changes
+    /// down onto individual elements so the canvas reflects the updated tokens immediately.
+    ///
+    /// - Parameters:
+    ///   - tokens: The updated `DesignTokenSet` to propagate.
+    ///   - artboards: The current artboard array (mutated in-place, returned via callbacks).
+    ///   - mockupStylePreset: The active mockup style preset (its raw value is written as a tag).
+    ///   - latestComponentSpecs: The current component spec array (mutated in-place).
+    ///   - onArtboardsUpdated: Called with the fully mutated artboard array.
+    ///   - onComponentSpecsUpdated: Called with the updated component spec array.
+    ///   - onRegenerateJSON: Called after propagation so the ViewModel refreshes its JSON preview.
+    func propagateGlobalTokenChanges(
+        _ tokens: DesignTokenSet,
+        artboards: [Artboard],
+        mockupStylePreset: MockupStylePreset,
+        latestComponentSpecs: [ComponentSpec],
+        onArtboardsUpdated: ([Artboard]) -> Void,
+        onComponentSpecsUpdated: ([ComponentSpec]) -> Void,
+        onRegenerateJSON: () -> Void
+    ) {
+        // Update token bindings on component specs
+        let updatedSpecs = latestComponentSpecs.map { spec -> ComponentSpec in
+            var copy = spec
+            var bindings = copy.tokenBindings ?? [:]
+            for key in tokens.colors.keys {
+                if bindings[key] == nil {
+                    bindings[key] = key
+                }
+            }
+            copy.tokenBindings = bindings
+            return copy
+        }
+        onComponentSpecsUpdated(updatedSpecs)
+
+        // Push token values down onto individual artboard elements
+        var updatedArtboards = artboards
+        for boardIndex in updatedArtboards.indices {
+            for elementIndex in updatedArtboards[boardIndex].elements.indices
+                where updatedArtboards[boardIndex].elements[elementIndex].kind != .imageRoot
+            {
+                var element = updatedArtboards[boardIndex].elements[elementIndex]
+                var tags = Set(element.tags)
+                tags.insert("token-sync:\(mockupStylePreset.rawValue)")
+
+                var style = element.style ?? ElementVisualStyle(
+                    fill: nil,
+                    stroke: nil,
+                    cornerRadius: nil,
+                    opacity: nil,
+                    typography: nil
+                )
+
+                if tags.contains("token:color.accent.primary") || element.semanticRole == .buttonPrimary {
+                    style.fill = ElementFillStyle(color: tokens.colors["accent.primary"], gradient: nil)
+                } else if tags.contains("token:color.surface.base") || element.kind == .shape {
+                    style.fill = ElementFillStyle(color: tokens.colors["surface.base"], gradient: nil)
+                }
+
+                if tags.contains("token:stroke.soft") {
+                    style.stroke = ElementStrokeStyle(
+                        color: tokens.colors["stroke.soft"],
+                        width: style.stroke?.width ?? 1
+                    )
+                }
+
+                if tags.contains("token:radius.control") {
+                    style.cornerRadius = tokens.radius["control"]
+                } else if tags.contains("token:radius.panel") {
+                    style.cornerRadius = tokens.radius["panel"]
+                }
+
+                element.tags = tags.sorted()
+                element.style = style
+                updatedArtboards[boardIndex].elements[elementIndex] = element
+            }
+        }
+        onArtboardsUpdated(updatedArtboards)
+        onRegenerateJSON()
+    }
+
+    // MARK: - Public Token Utility Helpers
+
+    /// Returns a normalised `#RRGGBB` hex string, or an empty string when `raw` is invalid.
+    func normalizedHex(_ raw: String) -> String {
+        _normalizedHex(raw)
+    }
+
+    /// Parses a typography token value (e.g. `"Regular / 14"` or `"14"`) and returns the size.
+    func typographySize(from value: String?, fallback: Double) -> Double {
+        _typographySize(from: value, fallback: fallback)
+    }
+
+    /// Replaces the trailing size component in a typography token value string.
+    func replacingTypographySize(in value: String, with size: Double) -> String {
+        _replacingTypographySize(in: value, with: size)
     }
 
     // MARK: - Private Helpers
@@ -140,8 +241,8 @@ final class DesignTokenService: ObservableObject {
                 tokens: current
             )
         )
-        if tokenRevisions.count > 80 {
-            tokenRevisions.removeFirst(tokenRevisions.count - 80)
+        if tokenRevisions.count > Constants.Memory.maxTokenRevisions {
+            tokenRevisions.removeFirst(tokenRevisions.count - Constants.Memory.maxTokenRevisions)
         }
     }
 
@@ -168,7 +269,7 @@ final class DesignTokenService: ObservableObject {
         )
     }
 
-    private func normalizedHex(_ raw: String) -> String {
+    private func _normalizedHex(_ raw: String) -> String {
         let cleaned = raw
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "#", with: "")
@@ -177,7 +278,7 @@ final class DesignTokenService: ObservableObject {
         return "#\(cleaned)"
     }
 
-    private func typographySize(from value: String?, fallback: Double) -> Double {
+    private func _typographySize(from value: String?, fallback: Double) -> Double {
         guard let value else { return fallback }
         let components = value
             .split(separator: "/")
@@ -191,7 +292,7 @@ final class DesignTokenService: ObservableObject {
         return fallback
     }
 
-    private func replacingTypographySize(in value: String, with size: Double) -> String {
+    private func _replacingTypographySize(in value: String, with size: Double) -> String {
         let rounded = Int(size.rounded())
         let parts = value
             .split(separator: "/")
