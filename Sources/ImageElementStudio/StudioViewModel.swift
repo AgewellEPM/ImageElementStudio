@@ -108,6 +108,15 @@ final class StudioViewModel: ObservableObject {
     let imageLoadingService = ImageLoadingService()
     let projectService = ProjectService()
     let exportService = ExportService()
+    let deviceCatalogService = DeviceCatalogService()
+    let signingService = SigningService()
+    let wireframeService = AIWireframeService()
+    private(set) lazy var deploymentService: DeploymentService = {
+        DeploymentService(
+            toolchainService: buildPipelineCoordinator.toolchainService,
+            signingService: signingService
+        )
+    }()
 
     typealias BuildManifest = BuildExportService.BuildManifest
     typealias DeterministicManifestSnapshot = BuildExportService.DeterministicManifestSnapshot
@@ -119,6 +128,19 @@ final class StudioViewModel: ObservableObject {
     @Published var isGeneratingApp: Bool = false
     @Published var showBuildOutput: Bool = false
     @Published var showSettingsSheet: Bool = false
+    @Published var showDeploymentWizard: Bool = false
+    @Published var showSelfTestPanel: Bool = false
+    @Published var canvasZoom: CGFloat = 1.0
+    @Published var isChatCollapsed: Bool = false
+    let selfTestService = SelfTestService()
+    let tokenCostService = TokenCostService()
+
+    // MARK: - Zoom Controls
+
+    func zoomIn() { canvasZoom = min(canvasZoom + 0.25, 5.0) }
+    func zoomOut() { canvasZoom = max(canvasZoom - 0.25, 0.25) }
+    func zoomToFit() { canvasZoom = 1.0 }
+    func setZoom(_ value: CGFloat) { canvasZoom = min(max(value, 0.25), 5.0) }
 
     init() {
         let defaultProjectName = UserDefaults.standard.string(forKey: "ImageElementStudio.ActiveProjectName") ?? "Default Project"
@@ -152,6 +174,15 @@ final class StudioViewModel: ObservableObject {
         codeGenerationPipeline.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
         buildPipelineCoordinator.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
         buildExportService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        deviceCatalogService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        signingService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        deploymentService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        wireframeService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        selfTestService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        tokenCostService.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+
+        codeGenerationPipeline.tokenCostService = tokenCostService
+        wireframeService.tokenCostService = tokenCostService
 
         strategyService.onAppendBuilderMessage = { [weak self] msg in self?.builderMessages.append(msg) }
         strategyService.onAppendMessage = { [weak self] msg in self?.messages.append(msg) }

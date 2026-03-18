@@ -198,6 +198,8 @@ struct AppEmulatorCanvas: View {
     let showGrid: Bool
     let gridSize: Double
     let showAlignmentGuides: Bool
+    var deviceSpec: DeviceSpec? = nil
+    var deviceOrientation: DeviceOrientation = .portrait
     let onSelect: (UUID?, Bool) -> Void
     let onMarqueeSelect: ([UUID], Bool) -> Void
     let onResize: (StudioViewModel.ResizeHandle, Double, Double) -> Void
@@ -208,9 +210,17 @@ struct AppEmulatorCanvas: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let effectiveCanvasSize: CGSize = {
+                if let device = deviceSpec {
+                    let size = device.screenSize(for: deviceOrientation)
+                    return CGSize(width: size.width, height: size.height)
+                } else {
+                    return CGSize(width: artboard.width, height: artboard.height)
+                }
+            }()
             let layout = CanvasLayoutMetrics(
                 containerSize: geometry.size,
-                canvasSize: CGSize(width: artboard.width, height: artboard.height)
+                canvasSize: effectiveCanvasSize
             )
             let renderRect = layout.renderRect
             let palette = EmulatorTokenPalette(tokens: tokens)

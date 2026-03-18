@@ -72,18 +72,103 @@ extension StudioViewModel {
 
     // MARK: - AI Code Generation
 
+    // MARK: - Deployment Wizard
+
+    func startDeploymentWizard() {
+        deploymentService.reset()
+        deploymentService.populateFromProject(
+            name: projectName,
+            bundleIDBase: "com.imageelementstudio.generated.\(projectName.lowercased().replacingOccurrences(of: " ", with: "-"))",
+            target: realTimeBuildTarget.rawValue
+        )
+        showDeploymentWizard = true
+    }
+
+    func openProjectInXcode() {
+        guard let path = lastRealtimeBuildPath else {
+            errorMessage = "No build output directory available yet. Generate an app first."
+            return
+        }
+        deploymentService.openInXcode(projectDirectory: URL(fileURLWithPath: path))
+    }
+
+    // MARK: - AI Wireframe Generation
+
+    func generateAIWireframe(quality: WireframeQuality) {
+        guard !wireframeService.isGenerating else { return }
+        let artboard = activeArtboard ?? Artboard.empty()
+        let artboardSize = CGSize(width: artboard.width, height: artboard.height)
+        let description: String
+        if let spec = acceptedStrategySpec {
+            description = "App: \(spec.vision). Users: \(spec.targetUsers.joined(separator: ", ")). Features: \(spec.mustHaveFeatures.joined(separator: ", "))"
+        } else if !projectName.isEmpty {
+            description = "App called \(projectName). Generate a professional wireframe layout."
+        } else {
+            description = "A modern mobile/desktop application. Generate a professional wireframe layout."
+        }
+
+        builderMessages.append(ChatMessage(
+            role: .assistant,
+            text: "Generating \(quality == .loFi ? "lo-fi" : "hi-fi") wireframe via AI..."
+        ))
+
+        Task {
+            let elements = await wireframeService.generateWireframe(
+                description: description,
+                existingElements: renderableElements,
+                artboardSize: artboardSize,
+                quality: quality,
+                tokens: latestDesignTokens
+            )
+
+            guard !elements.isEmpty else {
+                let errMsg = wireframeService.generationError ?? "Wireframe generation produced no elements."
+                builderMessages.append(ChatMessage(role: .assistant, text: "Wireframe generation failed: \(errMsg)"))
+                return
+            }
+
+            // Apply generated elements to the active artboard
+            if var updatedArtboard = activeArtboard, let index = activeArtboardIndex {
+                updatedArtboard.elements = elements
+                artboards[index] = updatedArtboard
+            } else {
+                let newArtboard = Artboard(
+                    id: UUID(),
+                    name: "AI Wireframe",
+                    width: Int(artboardSize.width),
+                    height: Int(artboardSize.height),
+                    elements: elements
+                )
+                artboards.append(newArtboard)
+                selectedArtboardID = newArtboard.id
+            }
+
+            regenerateJSONPreview()
+            builderMessages.append(ChatMessage(
+                role: .assistant,
+                text: "Generated \(quality == .loFi ? "lo-fi" : "hi-fi") wireframe with \(elements.count) elements."
+            ))
+        }
+    }
+
+    // MARK: - AI Code Generation
+
     func generateAndBuildFromCurrentImage() {
         guard !isGeneratingApp else { return }
         guard renderableElements.count > 1 || acceptedStrategySpec != nil || selectedImage != nil else {
             errorMessage = "Upload and analyze a design, or generate from an idea first."; return
         }
-        guard KeychainService.resolveAPIKey(for: .anthropicAPIKey) != nil else {
-            errorMessage = "No Anthropic API key configured. Open Settings to add one."; showSettingsSheet = true; return
+        let qualityRaw = UserDefaults.standard.string(forKey: "generationQuality") ?? AIGenerationQuality.fast.rawValue
+        let quality = AIGenerationQuality(rawValue: qualityRaw) ?? .fast
+
+        // Only require Anthropic API key for paid models — free local models use Ollama
+        if !quality.isFree {
+            guard KeychainService.resolveAPIKey(for: .anthropicAPIKey) != nil else {
+                errorMessage = "No Anthropic API key configured. Open Settings to add one, or select a free local model."; showSettingsSheet = true; return
+            }
         }
         isGeneratingApp = true; showBuildOutput = true; errorMessage = nil
         let appName = projectName.isEmpty ? "GeneratedApp" : projectName
-        let qualityRaw = UserDefaults.standard.string(forKey: "generationQuality") ?? AIGenerationQuality.fast.rawValue
-        let quality = AIGenerationQuality(rawValue: qualityRaw) ?? .fast
         let target = realTimeBuildTarget; let screenshotData: Data? = selectedImage?.jpegData()
         builderMessages.append(ChatMessage(role: .assistant, text: "Starting AI code generation for \(target.title) app: \(appName)..."))
         Task {

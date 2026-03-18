@@ -15,8 +15,12 @@ final class CodeGenerationPipeline: ObservableObject {
     // MARK: - Private
 
     private let anthropic = AnthropicService()
+    private let ollama = OllamaService()
     private var currentTask: Task<[GeneratedFileEntry], Never>?
     private let maxFixAttempts = 2
+
+    /// Optional cost service for recording token usage per API call.
+    var tokenCostService: TokenCostService?
 
     // MARK: - Generate App
 
@@ -83,7 +87,8 @@ final class CodeGenerationPipeline: ObservableObject {
         // Step 1: Architecture Planning
         // -----------------------------------------------------------
 
-        state = .planningArchitecture(progress: "Building architecture plan...")
+        let providerName = quality.isFree ? "Ollama (\(quality.title))" : "Claude (\(quality.title))"
+        state = .planningArchitecture(progress: "Building architecture plan via \(providerName)...")
         streamingContent = ""
 
         let architecturePrompt = PromptBuilder.architecturePlanningPrompt(
@@ -98,29 +103,27 @@ final class CodeGenerationPipeline: ObservableObject {
 
         let systemPrompt = PromptBuilder.systemPrompt(target: target)
 
-        // Build messages, optionally including a screenshot
-        var userContent: [AnthropicService.ContentBlock] = []
-        if let screenshotData {
-            let base64 = screenshotData.base64EncodedString()
-            userContent.append(.image(mediaType: "image/png", base64Data: base64))
-        }
-        userContent.append(.text(architecturePrompt))
-
-        let planningMessages = [
-            AnthropicService.Message(role: .user, content: userContent)
-        ]
-
         let planResponseText: String
         do {
-            planResponseText = try await anthropic.streamMessage(
+            let (text, usage) = try await callAI(
                 system: systemPrompt,
-                messages: planningMessages,
-                model: quality,
+                userPrompt: architecturePrompt,
+                quality: quality,
                 maxTokens: 8192,
                 temperature: 0.3,
+                screenshotData: screenshotData,
                 onChunk: { [weak self] chunk in
                     self?.streamingContent += chunk
                 }
+            )
+            planResponseText = text
+            tokenCostService?.recordUsage(
+                provider: quality.isFree ? "ollama" : "anthropic",
+                model: quality.modelID,
+                operation: .architecturePlanning,
+                detail: "Architecture plan",
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens
             )
         } catch {
             state = .failed(error.localizedDescription)
@@ -182,14 +185,12 @@ final class CodeGenerationPipeline: ObservableObject {
                 target: target
             )
 
-            let fileMessages = [AnthropicService.Message.user(filePrompt)]
-
             let fileContent: String
             do {
-                fileContent = try await anthropic.streamMessage(
+                let (text, usage) = try await callAI(
                     system: systemPrompt,
-                    messages: fileMessages,
-                    model: quality,
+                    userPrompt: filePrompt,
+                    quality: quality,
                     maxTokens: 8192,
                     temperature: 0.2,
                     onChunk: { [weak self] chunk in
@@ -201,6 +202,15 @@ final class CodeGenerationPipeline: ObservableObject {
                             streamedText: self?.streamingContent ?? ""
                         )
                     }
+                )
+                fileContent = text
+                tokenCostService?.recordUsage(
+                    provider: quality.isFree ? "ollama" : "anthropic",
+                    model: quality.modelID,
+                    operation: .fileGeneration,
+                    detail: plan.name,
+                    inputTokens: usage.inputTokens,
+                    outputTokens: usage.outputTokens
                 )
             } catch {
                 state = .failed("Failed generating \(plan.name): \(error.localizedDescription)")
@@ -271,18 +281,24 @@ final class CodeGenerationPipeline: ObservableObject {
                         target: target
                     )
 
-                    let fixMessages = [AnthropicService.Message.user(fixPrompt)]
-
                     do {
-                        let fixResponse = try await anthropic.streamMessage(
+                        let (fixResponse, fixUsage) = try await callAI(
                             system: systemPrompt,
-                            messages: fixMessages,
-                            model: quality,
+                            userPrompt: fixPrompt,
+                            quality: quality,
                             maxTokens: 8192,
                             temperature: 0.1,
                             onChunk: { [weak self] chunk in
                                 self?.streamingContent += chunk
                             }
+                        )
+                        tokenCostService?.recordUsage(
+                            provider: quality.isFree ? "ollama" : "anthropic",
+                            model: quality.modelID,
+                            operation: .codeValidationFix,
+                            detail: "\(entry.name) fix #\(fixAttempt)",
+                            inputTokens: fixUsage.inputTokens,
+                            outputTokens: fixUsage.outputTokens
                         )
 
                         let cleaned = CodeValidator.stripCodeFences(fixResponse)
@@ -316,6 +332,52 @@ final class CodeGenerationPipeline: ObservableObject {
         streamingContent = ""
         currentFileName = nil
         return generatedFiles
+    }
+
+    // MARK: - Unified AI Call (Anthropic or Ollama)
+
+    /// Routes the AI call to either Anthropic or Ollama based on the quality setting.
+    private func callAI(
+        system: String,
+        userPrompt: String,
+        quality: AIGenerationQuality,
+        maxTokens: Int,
+        temperature: Double,
+        screenshotData: Data? = nil,
+        onChunk: @Sendable @MainActor @escaping (String) -> Void
+    ) async throws -> (String, TokenUsage) {
+        if quality.isFree {
+            // Use Ollama local model
+            return try await ollama.streamChatCompletion(
+                model: quality.modelID,
+                system: system,
+                messages: [("user", userPrompt)],
+                temperature: temperature,
+                maxTokens: maxTokens,
+                onChunk: onChunk
+            )
+        } else {
+            // Use Anthropic Claude
+            var userContent: [AnthropicService.ContentBlock] = []
+            if let screenshotData {
+                let base64 = screenshotData.base64EncodedString()
+                userContent.append(.image(mediaType: "image/png", base64Data: base64))
+            }
+            userContent.append(.text(userPrompt))
+
+            let messages = [
+                AnthropicService.Message(role: .user, content: userContent)
+            ]
+
+            return try await anthropic.streamMessageWithUsage(
+                system: system,
+                messages: messages,
+                model: quality,
+                maxTokens: maxTokens,
+                temperature: temperature,
+                onChunk: onChunk
+            )
+        }
     }
 
     // MARK: - Architecture Plan Parsing

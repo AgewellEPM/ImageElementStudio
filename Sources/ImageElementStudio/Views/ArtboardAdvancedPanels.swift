@@ -14,6 +14,7 @@ struct ArtboardAdvancedPanels: View {
         InteropPanelView(viewModel: viewModel)
         BuildQualityPanelView(viewModel: viewModel)
         ReviewPanelView(viewModel: viewModel)
+        TokenCostPanelView(viewModel: viewModel)
         MemoryPanelView(viewModel: viewModel)
         if showElementJSONOnRight {
             ElementJSONPanelView(viewModel: viewModel)

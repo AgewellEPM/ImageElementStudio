@@ -216,6 +216,48 @@ struct GeneratedProjectWriter: Sendable {
         return projectDirectory
     }
 
+    // MARK: - Update Signing Configuration
+
+    /// Updates a generated project's signing settings by rewriting the project.yml
+    /// with the given team ID and signing identity. For SPM (macOS) projects this
+    /// creates an xcconfig file that Xcode reads when the project is opened.
+    static func updateProjectSigning(
+        at projectDirectory: URL,
+        teamID: String,
+        signingIdentity: String,
+        bundleID: String
+    ) throws {
+        let fm = FileManager.default
+
+        // Update project.yml if it exists (iOS / XcodeGen projects)
+        let projectYmlPath = projectDirectory.appendingPathComponent("project.yml")
+        if fm.fileExists(atPath: projectYmlPath.path) {
+            var content = (try? String(contentsOf: projectYmlPath, encoding: .utf8)) ?? ""
+            // Append signing settings block
+            let signingBlock = """
+
+            settingGroups:
+              signing:
+                DEVELOPMENT_TEAM: "\(teamID)"
+                CODE_SIGN_IDENTITY: "\(signingIdentity)"
+                CODE_SIGN_STYLE: Manual
+                PRODUCT_BUNDLE_IDENTIFIER: "\(bundleID)"
+            """
+            content += signingBlock
+            try content.write(to: projectYmlPath, atomically: true, encoding: .utf8)
+        }
+
+        // Create an xcconfig for macOS SPM projects
+        let xcconfigPath = projectDirectory.appendingPathComponent("Signing.xcconfig")
+        let xcconfigContent = """
+        DEVELOPMENT_TEAM = \(teamID)
+        CODE_SIGN_IDENTITY = \(signingIdentity)
+        CODE_SIGN_STYLE = Manual
+        PRODUCT_BUNDLE_IDENTIFIER = \(bundleID)
+        """
+        try xcconfigContent.write(to: xcconfigPath, atomically: true, encoding: .utf8)
+    }
+
     // MARK: - Private Helpers
 
     /// Creates a directory (and any intermediate directories) if it does not already exist.

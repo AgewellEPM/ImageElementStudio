@@ -13,6 +13,7 @@ struct KeychainService {
     enum KeyName: String, CaseIterable {
         case anthropicAPIKey = "anthropic-api-key"
         case openaiAPIKey = "openai-api-key"
+        case geminiAPIKey = "gemini-api-key"
     }
 
     // Store a key value in the Keychain
@@ -99,6 +100,8 @@ struct KeychainService {
             envKey = "ANTHROPIC_API_KEY"
         case .openaiAPIKey:
             envKey = "OPENAI_API_KEY"
+        case .geminiAPIKey:
+            envKey = "GEMINI_API_KEY"
         }
 
         // 2. Environment variable — dev/CI only, not persisted
@@ -129,6 +132,8 @@ struct KeychainService {
                 defaultsKey = "ANTHROPIC_API_KEY"
             case .openaiAPIKey:
                 defaultsKey = "OPENAI_API_KEY"
+            case .geminiAPIKey:
+                defaultsKey = "GEMINI_API_KEY"
             }
 
             // Only migrate if there is a value in UserDefaults and nothing in Keychain yet
@@ -144,6 +149,63 @@ struct KeychainService {
 
         AppLogger.info("API key migration from UserDefaults completed", category: .security)
         UserDefaults.standard.set(true, forKey: migrationFlag)
+    }
+
+    // MARK: - Raw Value Storage (Non-API-Key Data)
+
+    /// Store a raw string value in the Keychain, bypassing API key format validation.
+    /// Used for non-API-key data such as team IDs and signing identities.
+    static func storeRaw(_ value: String, for account: String) throws {
+        // Delete existing entry first; failure is expected when no prior entry exists.
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        guard let data = value.data(using: .utf8) else {
+            throw KeychainError.encodingFailed
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            AppLogger.error("Keychain storeRaw failed for \(account): OSStatus \(status)", category: .security)
+            throw KeychainError.storeFailed(status)
+        }
+        AppLogger.debug("Keychain raw value stored for account: \(account)", category: .security)
+    }
+
+    /// Retrieve a raw string value from the Keychain by account name.
+    /// Used for non-API-key data such as team IDs and signing identities.
+    static func retrieveRaw(for account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8),
+              !string.isEmpty else {
+            return nil
+        }
+
+        return string
     }
 
     enum KeychainError: LocalizedError {

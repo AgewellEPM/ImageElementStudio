@@ -182,7 +182,7 @@ final class XcodeToolchainService: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private final class OutputAccumulator: @unchecked Sendable {
+    final class OutputAccumulator: @unchecked Sendable {
         private let lock = NSLock()
         private var _output = ""
 
@@ -364,7 +364,7 @@ final class XcodeToolchainService: ObservableObject {
         return nil
     }
 
-    private func shellEscape(_ path: String) -> String {
+    func shellEscape(_ path: String) -> String {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

@@ -141,6 +141,26 @@ actor AnthropicService {
         temperature: Double = 0.3,
         onChunk: @Sendable @MainActor (String) -> Void
     ) async throws -> String {
+        let (text, _) = try await streamMessageWithUsage(
+            system: system,
+            messages: messages,
+            model: model,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            onChunk: onChunk
+        )
+        return text
+    }
+
+    /// Streams a Claude API response and returns both the text and token usage.
+    func streamMessageWithUsage(
+        system: String,
+        messages: [Message],
+        model: AIGenerationQuality,
+        maxTokens: Int = 8192,
+        temperature: Double = 0.3,
+        onChunk: @Sendable @MainActor (String) -> Void
+    ) async throws -> (String, TokenUsage) {
         try checkRateLimit()
         AppLogger.info("Streaming API call started (model: \(model.modelID), maxTokens: \(maxTokens))", category: .api)
         let apiKey = try resolveAPIKey()
@@ -161,9 +181,9 @@ actor AnthropicService {
         request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
 
         do {
-            let result = try await executeStreamingRequest(request: request, onChunk: onChunk)
-            AppLogger.info("Streaming API call completed (\(result.count) chars)", category: .api)
-            return result
+            let (result, usage) = try await executeStreamingRequest(request: request, onChunk: onChunk)
+            AppLogger.info("Streaming API call completed (\(result.count) chars, \(usage.inputTokens)+\(usage.outputTokens) tokens)", category: .api)
+            return (result, usage)
         } catch {
             AppLogger.error("Streaming API call failed: \(error.localizedDescription)", category: .api)
             throw error
@@ -180,6 +200,24 @@ actor AnthropicService {
         maxTokens: Int = 8192,
         temperature: Double = 0.3
     ) async throws -> String {
+        let (text, _) = try await sendMessageWithUsage(
+            system: system,
+            messages: messages,
+            model: model,
+            maxTokens: maxTokens,
+            temperature: temperature
+        )
+        return text
+    }
+
+    /// Sends a non-streaming message and returns both the text and token usage.
+    func sendMessageWithUsage(
+        system: String,
+        messages: [Message],
+        model: AIGenerationQuality,
+        maxTokens: Int = 8192,
+        temperature: Double = 0.3
+    ) async throws -> (String, TokenUsage) {
         try checkRateLimit()
         AppLogger.info("Non-streaming API call started (model: \(model.modelID), maxTokens: \(maxTokens))", category: .api)
         let apiKey = try resolveAPIKey()
@@ -212,9 +250,9 @@ actor AnthropicService {
             throw ServiceError.httpError(response.statusCode, body)
         }
 
-        let result = try extractTextFromResponse(data: data)
-        AppLogger.info("Non-streaming API call completed (\(result.count) chars)", category: .api)
-        return result
+        let (result, usage) = try extractTextAndUsageFromResponse(data: data)
+        AppLogger.info("Non-streaming API call completed (\(result.count) chars, \(usage.inputTokens)+\(usage.outputTokens) tokens)", category: .api)
+        return (result, usage)
     }
 
     // MARK: - Private: API Key
@@ -280,7 +318,7 @@ actor AnthropicService {
     private func executeStreamingRequest(
         request: URLRequest,
         onChunk: @Sendable @MainActor (String) -> Void
-    ) async throws -> String {
+    ) async throws -> (String, TokenUsage) {
         var lastError: (any Error)?
 
         for attempt in 0..<maxRetries {
@@ -399,9 +437,11 @@ actor AnthropicService {
     private func parseSSEStream(
         bytes: URLSession.AsyncBytes,
         onChunk: @Sendable @MainActor (String) -> Void
-    ) async throws -> String {
+    ) async throws -> (String, TokenUsage) {
         var accumulated = ""
         var lineBuffer = ""
+        var inputTokens = 0
+        var outputTokens = 0
 
         for try await byte in bytes {
             let char = Character(UnicodeScalar(byte))
@@ -430,11 +470,26 @@ actor AnthropicService {
                 let eventType = event["type"] as? String ?? ""
 
                 switch eventType {
+                case "message_start":
+                    // Extract input token count from message_start event
+                    if let message = event["message"] as? [String: Any],
+                       let usage = message["usage"] as? [String: Any],
+                       let input = usage["input_tokens"] as? Int {
+                        inputTokens = input
+                    }
+
                 case "content_block_delta":
                     if let delta = event["delta"] as? [String: Any],
                        let text = delta["text"] as? String {
                         accumulated += text
                         await onChunk(text)
+                    }
+
+                case "message_delta":
+                    // Extract output token count from message_delta event
+                    if let usage = event["usage"] as? [String: Any],
+                       let output = usage["output_tokens"] as? Int {
+                        outputTokens = output
                     }
 
                 case "message_stop":
@@ -446,8 +501,6 @@ actor AnthropicService {
                     throw ServiceError.streamingError(message)
 
                 default:
-                    // Ignore other event types: message_start, content_block_start,
-                    // content_block_stop, message_delta, ping
                     break
                 }
             } else {
@@ -455,12 +508,17 @@ actor AnthropicService {
             }
         }
 
-        return accumulated
+        return (accumulated, TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens))
     }
 
     // MARK: - Private: Response Extraction
 
     private func extractTextFromResponse(data: Data) throws -> String {
+        let (text, _) = try extractTextAndUsageFromResponse(data: data)
+        return text
+    }
+
+    private func extractTextAndUsageFromResponse(data: Data) throws -> (String, TokenUsage) {
         let root: [String: Any]
         do {
             guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -493,7 +551,15 @@ actor AnthropicService {
             throw ServiceError.decodingError("No text content blocks in response")
         }
 
-        return textParts.joined()
+        // Extract usage metadata
+        var inputTokens = 0
+        var outputTokens = 0
+        if let usage = root["usage"] as? [String: Any] {
+            inputTokens = usage["input_tokens"] as? Int ?? 0
+            outputTokens = usage["output_tokens"] as? Int ?? 0
+        }
+
+        return (textParts.joined(), TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens))
     }
 
     // MARK: - Private: Retry-After Parsing

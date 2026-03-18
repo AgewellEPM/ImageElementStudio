@@ -32,9 +32,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.imageelementstudio.app
         INFOPLIST_FILE: Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_ENTITLEMENTS: ImageElementStudio.entitlements
         CODE_SIGN_STYLE: Automatic
         PRODUCT_NAME: "Image Element Studio"
       configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: ImageElementStudioDirect.entitlements
         Release:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: APP_STORE
+          CODE_SIGN_ENTITLEMENTS: ImageElementStudio.entitlements

@@ -36,11 +36,24 @@ struct AboutView: View {
             Divider()
                 .frame(width: 200)
 
+            VStack(spacing: 6) {
+                Link("Privacy Policy", destination: AboutView.privacyPolicyURL)
+                Link("Terms of Service", destination: AboutView.termsOfServiceURL)
+                Link("Support", destination: AboutView.supportURL)
+            }
+            .font(.caption)
+
             Text("Copyright 2025-2026. All rights reserved.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
         .padding(32)
-        .frame(width: 320, height: 300)
+        .frame(width: 320, height: 360)
     }
+
+    // MARK: - URLs
+
+    static let privacyPolicyURL = URL(string: "https://imageelementstudio.com/privacy")!
+    static let termsOfServiceURL = URL(string: "https://imageelementstudio.com/terms")!
+    static let supportURL = URL(string: "https://imageelementstudio.com/support")!
 }

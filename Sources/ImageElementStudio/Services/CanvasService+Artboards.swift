@@ -440,22 +440,40 @@ extension CanvasService {
         }
 
         let generatedBoards = suggestions.map { suggestion in
-            var cloned = sourceBoard
-            cloned.id = UUID()
-            cloned.name = suggestion.name
-            cloned.elements = sourceBoard.elements.map { element in
-                var copy = element
-                copy.id = UUID()
-                if copy.kind == .imageRoot {
-                    var tags = Set(copy.tags)
-                    tags.insert("auto-state")
-                    tags.insert("state:\(slugifiedStateName(suggestion.name))")
-                    copy.tags = tags.sorted()
-                    copy.semanticReason = suggestion.reason
+            // Use mobile dimensions for state artboards
+            let mobileWidth = 393
+            let mobileHeight = 852
+
+            // Partition elements: keep shared (navigation, headers, root) + screen-relevant
+            let screenKeywords = extractScreenKeywords(from: suggestion.name)
+            let filteredElements = sourceBoard.elements.filter { element in
+                if element.kind == .imageRoot { return true }
+                if let role = element.semanticRole, isSharedRole(role) { return true }
+                if !screenKeywords.isEmpty && elementMatchesScreen(element, keywords: screenKeywords) {
+                    return true
                 }
-                return copy
+                return screenKeywords.isEmpty
             }
-            return cloned
+
+            let nonRootCount = filteredElements.filter { $0.kind != .imageRoot }.count
+            let sourceElements = nonRootCount >= 3 ? filteredElements : sourceBoard.elements
+
+            // Auto-layout elements into a mobile-friendly vertical stack
+            let laidOutElements = autoLayoutForMobile(
+                elements: sourceElements,
+                screenWidth: Double(mobileWidth),
+                screenHeight: Double(mobileHeight),
+                stateName: suggestion.name,
+                stateReason: suggestion.reason
+            )
+
+            return Artboard(
+                id: UUID(),
+                name: suggestion.name,
+                width: mobileWidth,
+                height: mobileHeight,
+                elements: laidOutElements
+            )
         }
 
         artboards = preservedBoards + generatedBoards
@@ -492,6 +510,197 @@ extension CanvasService {
         while output.hasPrefix("-") { output.removeFirst() }
         while output.hasSuffix("-") { output.removeLast() }
         return output.isEmpty ? "state" : output
+    }
+
+    // MARK: - Mobile Auto-Layout Engine
+
+    private func autoLayoutForMobile(
+        elements: [CanvasElement],
+        screenWidth: Double,
+        screenHeight: Double,
+        stateName: String,
+        stateReason: String
+    ) -> [CanvasElement] {
+        let padding: Double = 16
+        let spacing: Double = 10
+        let contentWidth = screenWidth - (padding * 2)
+
+        // Separate elements by role for layout ordering
+        var root: CanvasElement?
+        var navElements: [CanvasElement] = []
+        var headerElements: [CanvasElement] = []
+        var contentElements: [CanvasElement] = []
+
+        for element in elements {
+            if element.kind == .imageRoot {
+                root = element
+                continue
+            }
+            switch element.semanticRole {
+            case .navigationItem, .navigationSection, .appBrand:
+                navElements.append(element)
+            case .heading, .sectionTitle:
+                headerElements.append(element)
+            default:
+                contentElements.append(element)
+            }
+        }
+
+        var result: [CanvasElement] = []
+        var cursorY: Double = 0
+
+        // Root element (full screen)
+        if var rootEl = root {
+            rootEl.id = UUID()
+            rootEl.frame = ElementFrame(x: 0, y: 0, width: screenWidth, height: screenHeight)
+            var tags = Set(rootEl.tags)
+            tags.insert("auto-state")
+            tags.insert("state:\(slugifiedStateName(stateName))")
+            rootEl.tags = tags.sorted()
+            rootEl.semanticReason = stateReason
+            result.append(rootEl)
+        }
+
+        // Status bar area
+        cursorY = 54
+
+        // Navigation bar (horizontal row at top)
+        if !navElements.isEmpty {
+            let navHeight: Double = 44
+            let navItemWidth = min(contentWidth / Double(navElements.count), 80)
+            var navX = padding
+            for nav in navElements {
+                var copy = nav
+                copy.id = UUID()
+                copy.frame = ElementFrame(x: navX, y: cursorY, width: navItemWidth - 4, height: navHeight)
+                result.append(copy)
+                navX += navItemWidth
+            }
+            cursorY += navHeight + spacing
+        }
+
+        // Headers
+        for header in headerElements {
+            var copy = header
+            copy.id = UUID()
+            let h: Double = header.semanticRole == .heading ? 36 : 28
+            copy.frame = ElementFrame(x: padding, y: cursorY, width: contentWidth, height: h)
+            result.append(copy)
+            cursorY += h + spacing
+        }
+
+        // Content elements — layout in a responsive grid/stack
+        let isWideContent = contentElements.contains { element in
+            element.semanticRole == .chart || element.semanticRole == .panel
+        }
+
+        if isWideContent {
+            // Cards/panels: full width, stacked
+            for element in contentElements {
+                var copy = element
+                copy.id = UUID()
+                let h = heightForRole(element.semanticRole, defaultHeight: 64)
+                copy.frame = ElementFrame(x: padding, y: cursorY, width: contentWidth, height: h)
+                result.append(copy)
+                cursorY += h + spacing
+            }
+        } else {
+            // Small items: 2-column grid
+            let colWidth = (contentWidth - spacing) / 2
+            var col = 0
+            var rowY = cursorY
+            var maxRowH: Double = 0
+
+            for element in contentElements {
+                var copy = element
+                copy.id = UUID()
+                let h = heightForRole(element.semanticRole, defaultHeight: 48)
+                let x = padding + Double(col) * (colWidth + spacing)
+                copy.frame = ElementFrame(x: x, y: rowY, width: colWidth, height: h)
+                result.append(copy)
+                maxRowH = max(maxRowH, h)
+
+                col += 1
+                if col >= 2 {
+                    col = 0
+                    rowY += maxRowH + spacing
+                    maxRowH = 0
+                }
+            }
+            if col > 0 {
+                rowY += maxRowH + spacing
+            }
+            cursorY = rowY
+        }
+
+        // If content overflows, extend artboard height (already handled by Artboard rendering)
+        return result
+    }
+
+    private func heightForRole(_ role: SemanticElementRole?, defaultHeight: Double) -> Double {
+        switch role {
+        case .chart, .chartAxis:
+            return 180
+        case .panel:
+            return 120
+        case .metricValue, .metricLabel, .metricDelta:
+            return 56
+        case .tableHeader:
+            return 36
+        case .tableCell:
+            return 44
+        case .buttonPrimary, .buttonSecondary:
+            return 44
+        case .avatar:
+            return 48
+        case .tag:
+            return 32
+        case .dateFilter:
+            return 40
+        case .listItem:
+            return 52
+        default:
+            return defaultHeight
+        }
+    }
+
+    // MARK: - Screen Partitioning Helpers
+
+    private func extractScreenKeywords(from screenName: String) -> [String] {
+        // Strip prefixes like "State - Screen: " or "State • "
+        let cleaned = screenName
+            .replacingOccurrences(of: "State - Screen:", with: "")
+            .replacingOccurrences(of: "State •", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Split into meaningful words (3+ chars, not stopwords)
+        let stopwords: Set<String> = ["the", "and", "for", "with", "from", "this", "that", "view", "screen", "page", "state"]
+        return cleaned
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.lowercased() }
+            .filter { $0.count >= 3 && !stopwords.contains($0) }
+    }
+
+    private func isSharedRole(_ role: SemanticElementRole) -> Bool {
+        switch role {
+        case .navigationItem, .navigationSection, .appBrand:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func elementMatchesScreen(_ element: CanvasElement, keywords: [String]) -> Bool {
+        let nameLC = element.name.lowercased()
+        let contentLC = (element.content ?? "").lowercased()
+        let reasonLC = (element.semanticReason ?? "").lowercased()
+
+        for keyword in keywords {
+            if nameLC.contains(keyword) || contentLC.contains(keyword) || reasonLC.contains(keyword) {
+                return true
+            }
+        }
+        return false
     }
 
     private func alignSelectedElement(

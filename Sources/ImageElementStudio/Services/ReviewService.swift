@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class ReviewService: ObservableObject {
     @Published var reviewComments: [DesignReviewComment] = []
-    @Published var reviewApprovalState: ReviewApprovalState = .pending
+    @Published var reviewApprovalState: ReviewApprovalState = .approved
     @Published var reviewCommentDraft: String = ""
     @Published var reviewCommentAssigneeDraft: String = ""
     @Published var reviewCommentHasDueDate: Bool = false

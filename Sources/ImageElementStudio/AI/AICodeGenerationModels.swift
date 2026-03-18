@@ -40,11 +40,40 @@ struct FilePlanEntry: Sendable {
     var dependencies: [String]
 }
 
+// MARK: - AI Provider
+
+/// Which AI backend to use for code generation.
+enum AIProvider: String, Codable, CaseIterable, Identifiable, Sendable {
+    case anthropic
+    case ollama
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .anthropic: return "Anthropic Claude (Paid)"
+        case .ollama: return "Ollama Local (Free)"
+        }
+    }
+
+    var isFree: Bool {
+        switch self {
+        case .anthropic: return false
+        case .ollama: return true
+        }
+    }
+}
+
 // MARK: - Generation Quality
 
 enum AIGenerationQuality: String, Codable, CaseIterable, Identifiable, Sendable {
     case fast
     case quality
+    // Free local models via Ollama
+    case freeDeepSeek
+    case freeQwen
+    case freeGemma
+    case freeCodeLlama
 
     var id: String { rawValue }
 
@@ -52,6 +81,10 @@ enum AIGenerationQuality: String, Codable, CaseIterable, Identifiable, Sendable 
         switch self {
         case .fast: return "Fast (Sonnet)"
         case .quality: return "Quality (Opus)"
+        case .freeDeepSeek: return "DeepSeek Coder V2 (Free)"
+        case .freeQwen: return "Qwen 2.5 Coder (Free)"
+        case .freeGemma: return "Gemma 2 (Free)"
+        case .freeCodeLlama: return "CodeLlama (Free)"
         }
     }
 
@@ -59,8 +92,29 @@ enum AIGenerationQuality: String, Codable, CaseIterable, Identifiable, Sendable 
         switch self {
         case .fast: return "claude-sonnet-4-5-20250929"
         case .quality: return "claude-opus-4-6"
+        case .freeDeepSeek: return "deepseek-coder-v2:16b"
+        case .freeQwen: return "qwen2.5-coder:7b"
+        case .freeGemma: return "gemma2:9b"
+        case .freeCodeLlama: return "codellama:13b"
         }
     }
+
+    /// Whether this quality tier uses a free local model (Ollama).
+    var isFree: Bool {
+        switch self {
+        case .fast, .quality: return false
+        case .freeDeepSeek, .freeQwen, .freeGemma, .freeCodeLlama: return true
+        }
+    }
+
+    /// The provider backend for this quality tier.
+    var provider: AIProvider {
+        isFree ? .ollama : .anthropic
+    }
+
+    /// Grouped display: paid models first, then free.
+    static var paidCases: [AIGenerationQuality] { [.fast, .quality] }
+    static var freeCases: [AIGenerationQuality] { [.freeDeepSeek, .freeQwen, .freeGemma, .freeCodeLlama] }
 }
 
 // MARK: - Generation State

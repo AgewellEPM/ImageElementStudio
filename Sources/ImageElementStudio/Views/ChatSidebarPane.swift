@@ -6,19 +6,18 @@ struct ChatSidebarPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Project Progress")
-                .font(.title3.weight(.semibold))
-            Text("Left panel tracks steps and build notes.")
+            HStack(spacing: 8) {
+                Image(systemName: "hammer.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                Text("Project Progress")
+                    .font(.title3.weight(.semibold))
+            }
+            Text("Build steps and project notes")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            GroupBox("Build Steps") {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.buildSteps) { step in
-                        BuildStepRow(step: step)
-                    }
-                }
-            }
+            BuildStepsProgressView(steps: viewModel.buildSteps)
 
             HStack {
                 Text("Project Notes")
@@ -49,43 +48,93 @@ struct ChatSidebarPane: View {
             .controlSize(.large)
         }
         .padding(14)
-        .frame(minWidth: 270, idealWidth: 290, maxWidth: 320)
-        .background(.thinMaterial)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .sheet(isPresented: $showBuildPopup) {
             BuildProjectPopupView(viewModel: viewModel)
         }
     }
 }
 
-struct BuildStepRow: View {
-    let step: StudioViewModel.BuildStep
+/// Shows only completed steps (green checkmarks) + the current active step.
+/// Pending steps below the active one are hidden until reached.
+struct BuildStepsProgressView: View {
+    let steps: [StudioViewModel.BuildStep]
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(indicatorColor)
-                .frame(width: 8, height: 8)
-                .padding(.top, 4)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(step.title)
-                    .font(.caption.weight(.semibold))
-                Text(step.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+    /// Steps to display: all .done + the first .active or first .pending (the "current" step).
+    private var visibleSteps: [StudioViewModel.BuildStep] {
+        var result: [StudioViewModel.BuildStep] = []
+        var foundCurrent = false
+        for step in steps {
+            switch step.state {
+            case .done:
+                result.append(step)
+            case .active:
+                result.append(step)
+                foundCurrent = true
+            case .pending:
+                if !foundCurrent {
+                    // Show the first pending step as the "next up"
+                    result.append(step)
+                    foundCurrent = true
+                }
             }
+            if foundCurrent && step.state != .done { break }
         }
+        return result
     }
 
-    private var indicatorColor: Color {
-        switch step.state {
-        case .pending:
-            return .gray
-        case .active:
-            return .orange
-        case .done:
-            return .green
+    private var completedCount: Int {
+        steps.filter { $0.state == .done }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Progress")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(completedCount)/\(steps.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(value: Double(completedCount), total: Double(steps.count))
+                .tint(.green)
+
+            ForEach(visibleSteps) { step in
+                HStack(alignment: .top, spacing: 8) {
+                    Group {
+                        switch step.state {
+                        case .done:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        case .active:
+                            ProgressView()
+                                .controlSize(.mini)
+                        case .pending:
+                            Image(systemName: "circle")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                    .padding(.top, 1)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(step.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(step.state == .done ? .secondary : .primary)
+                        if step.state != .done {
+                            Text(step.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
         }
+        .padding(10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

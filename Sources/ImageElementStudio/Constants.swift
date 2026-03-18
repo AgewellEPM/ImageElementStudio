@@ -265,4 +265,40 @@ enum Constants {
         /// Number of capability hints in scaffold.
         static let capabilityHintCount = 3
     }
+
+    // MARK: - Device Emulator
+
+    enum Device {
+        /// Default device identifier used when no selection has been made.
+        static let defaultDeviceID = "iphone16"
+        /// Default orientation for the device emulator.
+        static let defaultOrientation: DeviceOrientation = .portrait
+    }
+
+    // MARK: - Token Cost Estimation
+
+    enum TokenCost {
+        /// Maximum usage records retained per session.
+        static let maxSessionRecords = 500
+        /// Estimated input tokens for architecture planning call.
+        static let estimateArchitectureInputTokens = 3000
+        /// Estimated output tokens for architecture planning call.
+        static let estimateArchitectureOutputTokens = 4000
+        /// Estimated input tokens per file generation call.
+        static let estimateFileInputTokens = 2000
+        /// Estimated output tokens per file generation call.
+        static let estimateFileOutputTokens = 3000
+        /// Estimated input tokens per validation fix call.
+        static let estimateFixInputTokens = 2000
+        /// Estimated output tokens per validation fix call.
+        static let estimateFixOutputTokens = 3000
+        /// Estimated input tokens for wireframe generation.
+        static let estimateWireframeInputTokens = 1500
+        /// Estimated output tokens for wireframe generation.
+        static let estimateWireframeOutputTokens = 2000
+        /// Probability that a generated file needs a validation fix.
+        static let estimateFixProbability = 0.2
+        /// Extra token overhead when a screenshot is included.
+        static let estimateScreenshotTokenOverhead = 1000
+    }
 }
